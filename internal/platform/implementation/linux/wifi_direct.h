@@ -14,51 +14,89 @@
 
 #ifndef PLATFORM_IMPL_LINUX_WIFI_DIRECT_H_
 #define PLATFORM_IMPL_LINUX_WIFI_DIRECT_H_
-#include <memory>
 
+#include <cstdint>
+#include <memory>
 #include <optional>
+#include <string>
 
 #include <sdbus-c++/IConnection.h>
+#include <sdbus-c++/ProxyInterfaces.h>
 
+#include "absl/base/thread_annotations.h"
+#include "absl/synchronization/mutex.h"
+#include "internal/platform/implementation/linux/generated/dbus/networkmanager/device_wifip2p_client.h"
 #include "internal/platform/implementation/linux/network_manager.h"
-#include "internal/platform/implementation/linux/wifi_medium.h"
+#include "internal/platform/implementation/linux/wifi_direct_utils.h"
 #include "internal/platform/implementation/wifi_direct.h"
 
 namespace nearby {
 namespace linux {
-class NetworkManagerWifiDirectMedium : public api::WifiDirectMedium {
+class NetworkManagerWifiDirectMedium
+    : public api::WifiDirectMedium,
+      public sdbus::ProxyInterfaces<
+          org::freedesktop::NetworkManager::Device::WifiP2P_proxy> {
  public:
   NetworkManagerWifiDirectMedium(
       std::shared_ptr<networkmanager::NetworkManager> network_manager,
-      std::unique_ptr<NetworkManagerWifiMedium> wireless_device)
-      : system_bus_(network_manager->GetConnection()),
+      const sdbus::ObjectPath& wifi_p2p_device_path)
+      : ProxyInterfaces(*network_manager->GetConnection(),
+                        sdbus::ServiceName("org.freedesktop.NetworkManager"),
+                        wifi_p2p_device_path),
+        system_bus_(network_manager->GetConnection()),
         network_manager_(std::move(network_manager)),
-        wireless_device_(std::move(wireless_device)) {}
+        wifi_p2p_device_path_(wifi_p2p_device_path) {
+    registerProxy();
+  }
+  ~NetworkManagerWifiDirectMedium() override;
 
-  bool IsInterfaceValid() const override { return true; }
+  bool IsInterfaceValid() const override {
+    return !wifi_p2p_device_path_.empty();
+  }
   std::unique_ptr<api::WifiDirectSocket> ConnectToService(
       absl::string_view ip_address, int port,
-      CancellationFlag *cancellation_flag) override;
+      CancellationFlag* cancellation_flag) override;
   std::unique_ptr<api::WifiDirectServerSocket> ListenForService(
       int port) override;
   bool ConnectWifiDirect(
-      WifiDirectCredentials *wifi_direct_credentials) override;
+      const WifiDirectCredentials& wifi_direct_credentials) override;
   bool DisconnectWifiDirect() override;
 
-  bool StartWifiDirect(WifiDirectCredentials *wifi_direct_credentials) override;
+  bool StartWifiDirect(WifiDirectCredentials* wifi_direct_credentials) override;
   bool StopWifiDirect() override;
 
-  absl::optional<std::pair<std::int32_t, std::int32_t>> GetDynamicPortRange()
+  std::optional<std::pair<std::int32_t, std::int32_t>> GetDynamicPortRange()
       override {
     return std::nullopt;
   }
 
+  std::vector<WifiDirectAuthType> GetSupportedWifiDirectAuthTypes()
+      const override {
+    return {WifiDirectAuthType::WIFI_DIRECT_WITH_DEVICE_NAME};
+  }
+
+ protected:
+  void onPeerAdded(const sdbus::ObjectPath& peer) override;
+  void onPeerRemoved(const sdbus::ObjectPath& peer) override;
+
  private:
-  bool ConnectedToWifi();
+  using Peer = wifi_direct_internal::PeerInfo;
+
+  std::optional<Peer> FindPeerByName(absl::string_view device_name);
+  bool ActivatePeer(const Peer& peer);
+  void StopDiscovery();
 
   std::shared_ptr<sdbus::IConnection> system_bus_;
   std::shared_ptr<networkmanager::NetworkManager> network_manager_;
-  std::unique_ptr<NetworkManagerWifiMedium> wireless_device_;
+  sdbus::ObjectPath wifi_p2p_device_path_;
+
+  mutable absl::Mutex state_mutex_;
+  bool discovering_ ABSL_GUARDED_BY(state_mutex_) = false;
+  bool connected_ ABSL_GUARDED_BY(state_mutex_) = false;
+  std::string active_connection_path_ ABSL_GUARDED_BY(state_mutex_);
+  std::string local_ip_address_ ABSL_GUARDED_BY(state_mutex_);
+  std::string remote_ip_address_ ABSL_GUARDED_BY(state_mutex_);
+  absl::CondVar peer_changed_;
 };
 }  // namespace linux
 }  // namespace nearby

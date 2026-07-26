@@ -25,9 +25,10 @@ namespace linux {
 class WifiDirectSocket : public api::WifiDirectSocket {
  public:
   explicit WifiDirectSocket(TCPSocket socket) : socket_(std::move(socket)) {}
+  ~WifiDirectSocket() override { socket_.Close(); }
 
-  InputStream &GetInputStream() override { return socket_.GetInputStream(); }
-  OutputStream &GetOutputStream() override { return socket_.GetOutputStream(); }
+  InputStream& GetInputStream() override { return socket_.GetInputStream(); }
+  OutputStream& GetOutputStream() override { return socket_.GetOutputStream(); }
 
   Exception Close() override { return socket_.Close(); };
 

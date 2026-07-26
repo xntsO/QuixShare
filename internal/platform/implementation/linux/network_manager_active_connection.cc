@@ -79,7 +79,7 @@ std::vector<std::string> ActiveConnection::GetIP4Addresses() {
   sdbus::ObjectPath ip4config_path;
   try {
     ip4config_path = Ip4Config();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_PROPERTY_GET_ERROR(this, "Ip4Config", e);
     return {};
   }
@@ -88,13 +88,13 @@ std::vector<std::string> ActiveConnection::GetIP4Addresses() {
   std::vector<std::map<std::string, sdbus::Variant>> address_data;
   try {
     address_data = ip4config.AddressData();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_PROPERTY_GET_ERROR(&ip4config, "AddressData", e);
     return {};
   }
 
   std::vector<std::string> ip4addresses;
-  for (auto &data : address_data) {
+  for (auto& data : address_data) {
     if (data.count("address") == 1) {
       ip4addresses.push_back(data["address"].get<std::string>());
     }
@@ -102,10 +102,32 @@ std::vector<std::string> ActiveConnection::GetIP4Addresses() {
   return ip4addresses;
 }
 
+std::string ActiveConnection::GetIP4Gateway() {
+  sdbus::ObjectPath ip4config_path;
+  try {
+    ip4config_path = Ip4Config();
+  } catch (const sdbus::Error& e) {
+    DBUS_LOG_PROPERTY_GET_ERROR(this, "Ip4Config", e);
+    return {};
+  }
+
+  if (ip4config_path.empty() || ip4config_path == "/") {
+    return {};
+  }
+
+  IP4Config ip4config(system_bus_, ip4config_path);
+  try {
+    return ip4config.Gateway();
+  } catch (const sdbus::Error& e) {
+    DBUS_LOG_PROPERTY_GET_ERROR(&ip4config, "Gateway", e);
+    return {};
+  }
+}
+
 std::pair<std::optional<ActiveConnection::ActiveConnectionStateReason>, bool>
 ActiveConnection::WaitForConnection(absl::Duration timeout) {
   LOG(INFO) << __func__ << ": Waiting for an update to "
-                       << getProxy().getObjectPath() << "'s state";
+            << getProxy().getObjectPath() << "'s state";
 
   auto state_changed = [this]() {
     this->state_mutex_.AssertReaderHeld();

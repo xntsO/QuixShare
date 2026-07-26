@@ -41,23 +41,23 @@ namespace {
 constexpr char kDeviceIpv4TxtRecord[] = "IPv4";
 
 std::string GetActiveIpv4Address(
-    const std::shared_ptr<networkmanager::NetworkManager> &network_manager,
-    const std::shared_ptr<sdbus::IConnection> &system_bus) {
+    const std::shared_ptr<networkmanager::NetworkManager>& network_manager,
+    const std::shared_ptr<sdbus::IConnection>& system_bus) {
   std::vector<sdbus::ObjectPath> connection_paths;
   try {
     connection_paths = network_manager->ActiveConnections();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_PROPERTY_GET_ERROR(network_manager, "ActiveConnections", e);
     return {};
   }
 
-  for (auto &path : connection_paths) {
+  for (auto& path : connection_paths) {
     auto active_connection =
         std::make_unique<networkmanager::ActiveConnection>(system_bus, path);
     std::string conn_type;
     try {
       conn_type = active_connection->Type();
-    } catch (const sdbus::Error &e) {
+    } catch (const sdbus::Error& e) {
       DBUS_LOG_PROPERTY_GET_ERROR(active_connection, "Type", e);
       continue;
     }
@@ -87,7 +87,7 @@ bool WifiLanMedium::IsNetworkConnected() const {
 }
 
 std::optional<std::pair<std::string, std::string>> entry_group_key(
-    const NsdServiceInfo &nsd_service_info) {
+    const NsdServiceInfo& nsd_service_info) {
   auto name = nsd_service_info.GetServiceName();
   if (name.empty()) {
     LOG(ERROR) << __func__ << ": service name cannot be empty";
@@ -103,7 +103,7 @@ std::optional<std::pair<std::string, std::string>> entry_group_key(
   return std::make_pair(std::move(name), std::move(type));
 }
 
-bool WifiLanMedium::StartAdvertising(const NsdServiceInfo &nsd_service_info) {
+bool WifiLanMedium::StartAdvertising(const NsdServiceInfo& nsd_service_info) {
   auto key = entry_group_key(nsd_service_info);
   if (!key.has_value()) {
     return false;
@@ -113,7 +113,7 @@ bool WifiLanMedium::StartAdvertising(const NsdServiceInfo &nsd_service_info) {
     absl::ReaderMutexLock l(&entry_groups_mutex_);
     if (entry_groups_.count(*key) == 1) {
       LOG(ERROR) << __func__
-                         << ": advertising is already active for this service";
+                 << ": advertising is already active for this service";
       return false;
     }
   }
@@ -137,14 +137,15 @@ bool WifiLanMedium::StartAdvertising(const NsdServiceInfo &nsd_service_info) {
   sdbus::ObjectPath entry_group_path;
   try {
     entry_group_path = avahi_->EntryGroupNew();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_METHOD_CALL_ERROR(avahi_, "EntryGroupNew", e);
     return false;
   }
 
   auto entry_group =
       std::make_unique<avahi::EntryGroup>(*system_bus_, entry_group_path);
-  LOG(INFO) << __func__ << ": Adding avahi service with service type: " << nsd_service_info.GetServiceType();
+  LOG(INFO) << __func__ << ": Adding avahi service with service type: "
+            << nsd_service_info.GetServiceType();
 
   try {
     entry_group->AddService(
@@ -153,10 +154,10 @@ bool WifiLanMedium::StartAdvertising(const NsdServiceInfo &nsd_service_info) {
         0, nsd_service_info.GetServiceName(), nsd_service_info.GetServiceType(),
         std::string(), std::string(), nsd_service_info.GetPort(), txt_records);
     entry_group->Commit();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     LOG(ERROR) << __func__ << ": Got error '" << e.getName()
-                       << "' with message '" << e.getMessage()
-                       << "' while adding service";
+               << "' with message '" << e.getMessage()
+               << "' while adding service";
     return false;
   }
 
@@ -166,7 +167,7 @@ bool WifiLanMedium::StartAdvertising(const NsdServiceInfo &nsd_service_info) {
   return true;
 }
 
-bool WifiLanMedium::StopAdvertising(const NsdServiceInfo &nsd_service_info) {
+bool WifiLanMedium::StopAdvertising(const NsdServiceInfo& nsd_service_info) {
   auto key = entry_group_key(nsd_service_info);
   if (!key.has_value()) {
     return false;
@@ -175,7 +176,7 @@ bool WifiLanMedium::StopAdvertising(const NsdServiceInfo &nsd_service_info) {
   absl::MutexLock l(&entry_groups_mutex_);
   if (entry_groups_.count(*key) == 0) {
     LOG(ERROR) << __func__
-                       << ": Advertising is already inactive for this service.";
+               << ": Advertising is already inactive for this service.";
     return false;
   }
 
@@ -184,15 +185,15 @@ bool WifiLanMedium::StopAdvertising(const NsdServiceInfo &nsd_service_info) {
 }
 
 bool WifiLanMedium::StartDiscovery(
-    const std::string &service_type,
+    const std::string& service_type,
     api::WifiLanMedium::DiscoveredServiceCallback callback) {
   {
     absl::ReaderMutexLock l(&service_browsers_mutex_);
     if (service_browsers_.count(service_type) != 0) {
-      auto &object = service_browsers_[service_type];
+      auto& object = service_browsers_[service_type];
       LOG(ERROR) << __func__ << ": A service browser for service type "
-                         << service_type << " already exists at "
-                         << object->getProxy().getObjectPath();
+                 << service_type << " already exists at "
+                 << object->getProxy().getObjectPath();
       return false;
     }
   }
@@ -210,24 +211,23 @@ bool WifiLanMedium::StartDiscovery(
         << browser_object_path << " for service_type: " << service_type;
 
     absl::MutexLock l(&service_browsers_mutex_);
-    service_browsers_.emplace(
-        service_type,
-        std::make_unique<avahi::ServiceBrowser>(
-            *system_bus_, browser_object_path, avahi_));
-  } catch (const sdbus::Error &e) {
+    service_browsers_.emplace(service_type,
+                              std::make_unique<avahi::ServiceBrowser>(
+                                  *system_bus_, browser_object_path, avahi_));
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_METHOD_CALL_ERROR(avahi_, "ServiceBrowserPrepare", e);
     return false;
   }
 
   service_browsers_mutex_.ReaderLock();
-  auto &browser = service_browsers_[service_type];
+  auto& browser = service_browsers_[service_type];
   service_browsers_mutex_.ReaderUnlock();
 
   try {
     LOG(INFO) << __func__ << ": Starting service discovery for "
-                         << browser->getProxy().getObjectPath();
+              << browser->getProxy().getObjectPath();
     browser->Start();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_METHOD_CALL_ERROR(browser, "Start", e);
     return false;
   }
@@ -235,12 +235,12 @@ bool WifiLanMedium::StartDiscovery(
   return true;
 }
 
-bool WifiLanMedium::StopDiscovery(const std::string &service_type) {
+bool WifiLanMedium::StopDiscovery(const std::string& service_type) {
   absl::MutexLock l(&service_browsers_mutex_);
 
   if (service_browsers_.count(service_type) == 0) {
     LOG(ERROR) << __func__ << ": Service type " << service_type
-                       << " has not been registered for discovery";
+               << " has not been registered for discovery";
     return false;
   }
   service_browsers_.erase(service_type);
@@ -249,16 +249,16 @@ bool WifiLanMedium::StopDiscovery(const std::string &service_type) {
 }
 
 std::unique_ptr<api::WifiLanSocket> WifiLanMedium::ConnectToService(
-    const std::string &ip_address, int port,
-    CancellationFlag *cancellation_flag) {
+    const std::string& ip_address, int port,
+    CancellationFlag* cancellation_flag) {
   auto socket = TCPSocket::Connect(ip_address, port);
   if (!socket.has_value()) return nullptr;
-  return std::make_unique<WifiLanSocket>(*socket);
+  return std::make_unique<WifiLanSocket>(std::move(*socket));
 }
 
 std::unique_ptr<api::WifiLanServerSocket> WifiLanMedium::ListenForService(
     int port) {
-  LOG(INFO)<< __func__ << ": Listening for service WifiLanMedium";
+  LOG(INFO) << __func__ << ": Listening for service WifiLanMedium";
   auto socket = TCPServerSocket::Listen(std::nullopt, port);
   if (!socket.has_value()) return nullptr;
 
@@ -330,7 +330,7 @@ api::UpgradeAddressInfo WifiLanMedium::GetUpgradeAddressCandidates(
       // Convert to vector of chars in network byte order
       std::vector<char> addr_bytes(4);
       std::memcpy(addr_bytes.data(), &addr.s_addr, 4);
-      
+
       ipv4_addresses.push_back(
           ServiceAddress{.address = std::move(addr_bytes), .port = port});
       has_ipv4_address = true;

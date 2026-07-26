@@ -21,6 +21,7 @@
 #include <cerrno>
 #include <cstring>
 #include <functional>
+#include <utility>
 #include <unistd.h>
 
 #include "internal/platform/exception.h"
@@ -33,18 +34,34 @@ class TCPSocket {
  public:
   explicit TCPSocket(int fd)
       : fd_(fd), closed_(false), output_stream_(fd), input_stream_(fd) {}
+  TCPSocket(const TCPSocket&) = delete;
+  TCPSocket& operator=(const TCPSocket&) = delete;
+  TCPSocket(TCPSocket&& other) noexcept
+      : fd_(std::exchange(other.fd_, -1)),
+        closed_(std::exchange(other.closed_, true)),
+        output_stream_(fd_),
+        input_stream_(fd_) {}
+  TCPSocket& operator=(TCPSocket&& other) noexcept {
+    if (this == &other) return *this;
+    Close();
+    fd_ = std::exchange(other.fd_, -1);
+    closed_ = std::exchange(other.closed_, true);
+    output_stream_ = OutputStream(fd_);
+    input_stream_ = InputStream(fd_);
+    return *this;
+  }
+  ~TCPSocket() { Close(); }
 
   static std::optional<TCPSocket> Connect(const std::string& ip_address,
                                           int port) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
       LOG(ERROR) << __func__
-                         << ": Error opening socket: " << std::strerror(errno);
+                 << ": Error opening socket: " << std::strerror(errno);
       return std::nullopt;
     }
 
-    LOG(INFO) << __func__ << ": Connecting to " << ip_address << ":"
-                         << port;
+    LOG(INFO) << __func__ << ": Connecting to " << ip_address << ":" << port;
     struct sockaddr_in addr;
     addr.sin_addr.s_addr = inet_addr(ip_address.c_str());
     addr.sin_family = AF_INET;
@@ -53,8 +70,8 @@ class TCPSocket {
     auto ret =
         connect(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
     if (ret < 0) {
-      LOG(ERROR) << __func__ << ": Error connecting to socket: "
-                         << std::strerror(errno);
+      LOG(ERROR) << __func__
+                 << ": Error connecting to socket: " << std::strerror(errno);
       close(sock);
       return std::nullopt;
     }
@@ -66,7 +83,7 @@ class TCPSocket {
   OutputStream& GetOutputStream() { return output_stream_; }
 
   Exception Close() {
-    if (closed_) return {Exception::kFailed};
+    if (closed_) return {Exception::kSuccess};
 
     closed_ = true;
     input_stream_.Close();
@@ -97,7 +114,7 @@ class TCPServerSocket {
     auto sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
       LOG(ERROR) << __func__
-                         << ": Error opening socket: " << std::strerror(errno);
+                 << ": Error opening socket: " << std::strerror(errno);
       return std::nullopt;
     }
 
@@ -109,19 +126,19 @@ class TCPServerSocket {
       addr.sin_addr.s_addr = inet_addr(ip_address->get().c_str());
     else
       addr.sin_addr.s_addr = htonl(INADDR_ANY);
-    
+
     auto ret =
         bind(sock, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
     if (ret < 0) {
-      LOG(ERROR) << __func__ << ": Error binding to socket: "
-                         << std::strerror(errno);
+      LOG(ERROR) << __func__
+                 << ": Error binding to socket: " << std::strerror(errno);
       return std::nullopt;
     }
 
     ret = listen(sock, 0);
     if (ret < 0) {
-      LOG(ERROR) << __func__ << ": Error listening on socket: "
-                         << std::strerror(errno);
+      LOG(ERROR) << __func__
+                 << ": Error listening on socket: " << std::strerror(errno);
       return std::nullopt;
     }
 
@@ -131,12 +148,11 @@ class TCPServerSocket {
     struct sockaddr_in addr;
     socklen_t len = sizeof(addr);
 
-    auto conn =
-        accept(fd_, reinterpret_cast<struct sockaddr*>(&addr), &len);
+    auto conn = accept(fd_, reinterpret_cast<struct sockaddr*>(&addr), &len);
     if (conn < 0) {
       LOG(ERROR) << __func__
-                         << ": Error accepting incoming connections on socket "
-                         << fd_ << ": " << std::strerror(errno);
+                 << ": Error accepting incoming connections on socket " << fd_
+                 << ": " << std::strerror(errno);
       return std::nullopt;
     }
 
@@ -153,7 +169,7 @@ class TCPServerSocket {
     auto ret = close(fd);
     if (ret < 0) {
       LOG(ERROR) << __func__ << ": Error closing socket " << fd << ": "
-                         << std::strerror(errno);
+                 << std::strerror(errno);
       return {Exception::kFailed};
     }
 
@@ -163,12 +179,10 @@ class TCPServerSocket {
   int GetPort() const {
     struct sockaddr_in sin;
     socklen_t len = sizeof(sin);
-    auto ret =
-        getsockname(fd_, reinterpret_cast<struct sockaddr*>(&sin), &len);
+    auto ret = getsockname(fd_, reinterpret_cast<struct sockaddr*>(&sin), &len);
     if (ret < 0) {
-      LOG(ERROR) << __func__
-                         << ": Error getting information for socket "
-                         << fd_ << ": " << std::strerror(errno);
+      LOG(ERROR) << __func__ << ": Error getting information for socket " << fd_
+                 << ": " << std::strerror(errno);
       return 0;
     }
 

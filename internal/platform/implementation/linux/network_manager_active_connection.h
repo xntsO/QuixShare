@@ -61,10 +61,10 @@ class ActiveConnection
     std::string ToString() const;
   };
 
-  ActiveConnection(const ActiveConnection &) = delete;
-  ActiveConnection(ActiveConnection &&) = delete;
-  ActiveConnection &operator=(const ActiveConnection &) = delete;
-  ActiveConnection &operator=(ActiveConnection &&) = delete;
+  ActiveConnection(const ActiveConnection&) = delete;
+  ActiveConnection(ActiveConnection&&) = delete;
+  ActiveConnection& operator=(const ActiveConnection&) = delete;
+  ActiveConnection& operator=(ActiveConnection&&) = delete;
   explicit ActiveConnection(std::shared_ptr<sdbus::IConnection> system_bus,
                             sdbus::ObjectPath active_connection_path)
       : ProxyInterfaces(*system_bus,
@@ -80,14 +80,14 @@ class ActiveConnection
       if (state >= kStateUnknown && state <= kStateDeactivated) {
         state_ = static_cast<ActiveConnectionState>(state);
       }
-    } catch (const sdbus::Error &e) {
+    } catch (const sdbus::Error& e) {
       DBUS_LOG_PROPERTY_GET_ERROR(this, "State", e);
     }
   }
   virtual ~ActiveConnection() { unregisterProxy(); }
 
  protected:
-  void onStateChanged(const uint32_t &state, const uint32_t &reason) override
+  void onStateChanged(const uint32_t& state, const uint32_t& reason) override
       ABSL_LOCKS_EXCLUDED(state_mutex_) {
     absl::MutexLock l(&state_mutex_);
     if (state >= kStateUnknown && state <= kStateDeactivated) {
@@ -107,6 +107,7 @@ class ActiveConnection
       absl::Duration timeout = absl::Seconds(10))
       ABSL_LOCKS_EXCLUDED(state_mutex_);
   std::vector<std::string> GetIP4Addresses();
+  std::string GetIP4Gateway();
 
  private:
   std::shared_ptr<sdbus::IConnection> system_bus_;
@@ -116,9 +117,9 @@ class ActiveConnection
   ActiveConnectionStateReason reason_ ABSL_GUARDED_BY(state_mutex_);
 };
 
-extern std::ostream &operator<<(
-    std::ostream &stream,
-    const ActiveConnection::ActiveConnectionStateReason &reason);
+extern std::ostream& operator<<(
+    std::ostream& stream,
+    const ActiveConnection::ActiveConnectionStateReason& reason);
 
 }  // namespace networkmanager
 }  // namespace linux

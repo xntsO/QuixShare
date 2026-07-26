@@ -16,7 +16,6 @@
 #define PLATFORM_IMPL_LINUX_API_BLUEZ_BLE_ADVERTISEMENT_H_
 
 #include <future>
-#include <absl/log/log.h>
 #include <sdbus-c++/AdaptorInterfaces.h>
 #include <sdbus-c++/IConnection.h>
 #include <sdbus-c++/ProxyInterfaces.h>
