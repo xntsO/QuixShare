@@ -77,6 +77,9 @@ constexpr auto kEnableStopBleScanningOnWifiUpgrade =
 // Enable/Disable Wi-Fi Direct in Nearby connections SDK.
 constexpr auto kEnableWifiDirect =
     flags::Flag<bool>(kConfigPackage, "45741157", false);
+// When true, Wi-Fi Direct can only operate as a Group Client.
+constexpr auto kEnableWifiDirectGcOnly =
+    flags::Flag<bool>(kConfigPackage, "45741158", false);
 // by default, enable Wi-Fi Hotspot client.
 constexpr auto kEnableWifiHotspotClient =
     flags::Flag<bool>(kConfigPackage, "45648734", true);

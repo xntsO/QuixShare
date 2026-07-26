@@ -50,7 +50,7 @@ class BleV2Medium final : public api::ble::BleMedium {
   BleV2Medium &operator=(BleV2Medium &&) = delete;
 
   explicit BleV2Medium(BluetoothAdapter &adapter);
-  ~BleV2Medium() override = default;
+  ~BleV2Medium() override;
 
   bool StartAdvertising(
       const api::ble::BleAdvertisementData &advertising_data,

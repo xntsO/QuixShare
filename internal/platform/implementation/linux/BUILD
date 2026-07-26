@@ -64,6 +64,7 @@ cc_library(
         "linux_flags.h",
         #"log_message.h",
         "utils.h",
+        "test_data.h"
     ],
     copts = ["-lrt"],
     visibility = ["//third_party/nearby/sharing/internal/impl/linux:__pkg__"],
@@ -316,7 +317,7 @@ cc_test(
         #        "http_loader_test.cc",
         # "preferences_manager_test.cc",
         # "preferences_repository_test.cc",
-        #        "scheduled_executor_test.cc",
+                "scheduled_executor_test.cc",
         #        "submittable_executor_test.cc",
         #        "thread_pool_test.cc",
         "timer_test.cc",

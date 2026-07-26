@@ -58,6 +58,10 @@ class WifiDirectTest : public testing::TestWithParam<FeatureFlags> {
         connections::config_package_nearby::nearby_connections_feature::
             kEnableWifiDirect,
         true);
+    NearbyFlags::GetInstance().OverrideBoolFlagValue(
+        connections::config_package_nearby::nearby_connections_feature::
+            kEnableWifiDirectGcOnly,
+        false);
     env_.Start();
   }
   ~WifiDirectTest() override { env_.Stop(); }
@@ -72,6 +76,8 @@ TEST_F(WifiDirectTest, ConstructorDestructorWorks) {
   WifiDirect wifi_direct_a, wifi_direct_b;
 
   EXPECT_NE(&wifi_direct_a, &wifi_direct_b);
+  EXPECT_FALSE(wifi_direct_a.IsGCONly());
+  EXPECT_FALSE(wifi_direct_b.IsGCONly());
   EXPECT_TRUE(wifi_direct_a.IsGCAvailable());
   EXPECT_TRUE(wifi_direct_b.IsGCAvailable());
 }
@@ -89,6 +95,22 @@ TEST_F(WifiDirectTest, CanStartStopGO) {
   } else {
     EXPECT_FALSE(wifi_direct_a.StartWifiDirect());
   }
+}
+
+TEST_F(WifiDirectTest, GcOnlyCannotStartGO) {
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      connections::config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirectGcOnly,
+      true);
+  WifiDirect wifi_direct;
+
+  EXPECT_TRUE(wifi_direct.IsGCONly());
+  EXPECT_TRUE(wifi_direct.IsGCAvailable());
+  EXPECT_FALSE(wifi_direct.IsGOAvailable());
+  EXPECT_FALSE(wifi_direct.StartWifiDirect());
+  EXPECT_FALSE(
+      wifi_direct.StartAcceptingConnections(std::string(kServiceID), {}));
+  EXPECT_FALSE(wifi_direct.IsGOStarted());
 }
 
 TEST_F(WifiDirectTest, GCCanConnectDisconnectGO) {

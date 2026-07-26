@@ -271,6 +271,118 @@ TEST(BwuManagerBaseTest, AllowToUpgradeMedium) {
   bwu_manager->Shutdown();
 }
 
+TEST(BwuManagerBaseTest, GcOnlyDoesNotInitializeWifiDirectAsGO) {
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_connections_feature::kEnableWifiDirect,
+      true);
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirectGcOnly,
+      true);
+  {
+    ClientProxy client;
+    EndpointChannelManager ecm;
+    EndpointManager em(&ecm);
+    Mediums mediums;
+    auto fake_wifi_direct =
+        std::make_unique<FakeBwuHandler>(Medium::WIFI_DIRECT);
+    FakeBwuHandler* fake_wifi_direct_ptr = fake_wifi_direct.get();
+    absl::flat_hash_map<Medium, std::unique_ptr<BwuHandler>> handlers;
+    handlers.emplace(Medium::WIFI_DIRECT, std::move(fake_wifi_direct));
+    BwuManager::Config config;
+    config.allow_upgrade_to.wifi_direct = true;
+    auto bwu_manager = std::make_unique<BwuManager>(
+        mediums, em, ecm, std::move(handlers), config);
+    bwu_manager->MakeSingleThreadedForTesting();
+
+    ConnectionOptions options;
+    options.allowed.wifi_direct = true;
+    client.OnConnectionInitiated(
+        std::string(kEndpointId1),
+        {.remote_endpoint_info = ByteArray("remote endpoint")}, options, {},
+        "");
+    client.OnConnectionAccepted(std::string(kEndpointId1));
+    ecm.RegisterChannelForEndpoint(
+        &client, std::string(kEndpointId1),
+        std::make_unique<FakeEndpointChannel>(Medium::BLUETOOTH,
+                                              std::string(kServiceIdA)));
+
+    bwu_manager->InitiateBwuForEndpoint(&client, std::string(kEndpointId1),
+                                        Medium::WIFI_DIRECT);
+
+    EXPECT_TRUE(fake_wifi_direct_ptr->handle_initialize_calls().empty());
+    ecm.UnregisterChannelForEndpoint(
+        std::string(kEndpointId1), DisconnectionReason::LOCAL_DISCONNECTION,
+        SafeDisconnectionResult::kSafeDisconnection);
+    bwu_manager->Shutdown();
+  }
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirectGcOnly,
+      false);
+}
+
+TEST(BwuManagerBaseTest, GcOnlyAcceptsPeerOfferedWifiDirectPath) {
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_connections_feature::kEnableWifiDirect,
+      true);
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirectGcOnly,
+      true);
+  {
+    ClientProxy client;
+    EndpointChannelManager ecm;
+    EndpointManager em(&ecm);
+    Mediums mediums;
+    auto fake_wifi_direct =
+        std::make_unique<FakeBwuHandler>(Medium::WIFI_DIRECT);
+    FakeBwuHandler* fake_wifi_direct_ptr = fake_wifi_direct.get();
+    absl::flat_hash_map<Medium, std::unique_ptr<BwuHandler>> handlers;
+    handlers.emplace(Medium::WIFI_DIRECT, std::move(fake_wifi_direct));
+    BwuManager::Config config;
+    config.allow_upgrade_to.wifi_direct = true;
+    auto bwu_manager = std::make_unique<BwuManager>(
+        mediums, em, ecm, std::move(handlers), config);
+    bwu_manager->MakeSingleThreadedForTesting();
+
+    ConnectionResponseInfo response_info{
+        .remote_endpoint_info = ByteArray("remote endpoint"),
+        .is_incoming_connection = true,
+    };
+    client.OnConnectionInitiated(std::string(kEndpointId1), response_info, {},
+                                 {}, "");
+    client.OnConnectionAccepted(std::string(kEndpointId1));
+    ecm.RegisterChannelForEndpoint(
+        &client, std::string(kEndpointId1),
+        std::make_unique<FakeEndpointChannel>(Medium::BLUETOOTH,
+                                              std::string(kServiceIdA)));
+
+    ExceptionOr<OfflineFrame> path_available =
+        parser::FromBytes(parser::ForBwuWifiDirectPathAvailable(
+            /*ssid=*/"", /*password=*/"", /*port=*/2143,
+            /*frequency=*/2412, /*supports_disabling_encryption=*/false,
+            /*gateway=*/"123.234.23.1",
+            /*device_name=*/"NC-WifiDirectTest", /*pin=*/"b592f7d3"));
+    EXPECT_TRUE(path_available.ok());
+    if (path_available.ok()) {
+      bwu_manager->OnIncomingFrame(path_available.result(),
+                                   std::string(kEndpointId1), &client,
+                                   Medium::BLUETOOTH);
+    }
+
+    EXPECT_EQ(fake_wifi_direct_ptr->create_calls().size(), 1u);
+    ecm.UnregisterChannelForEndpoint(
+        std::string(kEndpointId1), DisconnectionReason::LOCAL_DISCONNECTION,
+        SafeDisconnectionResult::kSafeDisconnection);
+    bwu_manager->Shutdown();
+  }
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirectGcOnly,
+      false);
+}
+
 TEST(BwuManagerBaseTest, InitiateBwu_NeedToSwitchRole_Success) {
   NearbyFlags::GetInstance().OverrideBoolFlagValue(
       config_package_nearby::nearby_connections_feature::

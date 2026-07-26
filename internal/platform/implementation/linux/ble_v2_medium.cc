@@ -53,35 +53,51 @@ namespace nearby {
 namespace linux {
 
 namespace {
-using nearby::connections::config_package_nearby::nearby_connections_feature::kRefactorBleL2cap;
+using nearby::connections::config_package_nearby::nearby_connections_feature::
+    kRefactorBleL2cap;
 
 }  // namespace
+BleV2Medium::~BleV2Medium() {
 
-BleV2Medium::BleV2Medium(BluetoothAdapter &adapter)
-  : system_bus_(adapter.GetConnection()),
-    adapter_(adapter),
-  observers_(std::make_shared<ObserverList<api::BluetoothClassicMedium::Observer>>()),
-  devices_(std::make_unique<BluetoothDevices>(
-    system_bus_, adapter_.GetObjectPath(), *observers_)),
-    gatt_discovery_(std::make_shared<BluezGattDiscovery>(system_bus_)),
-    root_object_manager_(std::make_unique<RootObjectManager>(*system_bus_, sdbus::ObjectPath("/com/google/nearby/medium/ble/advertisement/monitor"))),
-    adv_monitor_manager_(
-      bluez::AdvertisementMonitorManager::
-      DiscoverAdvertisementMonitorManager(*system_bus_, adapter_)),
-    adv_manager_(std::make_unique<bluez::LEAdvertisementManager>(*system_bus_,
-                                                                 adapter)),
-    cur_adv_(nullptr) {
+  LOG(INFO) << __func__ << ": BleV2Medium cleanup ";
+  try {
+      StopAdvertising();
+    } catch (const std::exception& error) {
+      LOG(ERROR) << __func__
+                 << ": Failed to stop advertising: " <<
+                 error.what();
+    }
+}
+
+BleV2Medium::BleV2Medium(BluetoothAdapter& adapter)
+    : system_bus_(adapter.GetConnection()),
+      adapter_(adapter),
+      observers_(std::make_shared<
+                 ObserverList<api::BluetoothClassicMedium::Observer>>()),
+      devices_(std::make_unique<BluetoothDevices>(
+          system_bus_, adapter_.GetObjectPath(), *observers_)),
+      gatt_discovery_(std::make_shared<BluezGattDiscovery>(system_bus_)),
+      root_object_manager_(std::make_unique<RootObjectManager>(
+          *system_bus_,
+          sdbus::ObjectPath(
+              "/com/google/nearby/medium/ble/advertisement/monitor"))),
+      adv_monitor_manager_(
+          bluez::AdvertisementMonitorManager::
+              DiscoverAdvertisementMonitorManager(*system_bus_, adapter_)),
+      adv_manager_(std::make_unique<bluez::LEAdvertisementManager>(*system_bus_,
+                                                                   adapter)),
+      cur_adv_(nullptr) {
   if (!gatt_discovery_->InitializeKnownServices()) {
     LOG(WARNING) << __func__
                  << ": Failed to initialize known GATT services cache.";
   }
 
-
   if (adv_monitor_manager_) {
-    LOG(INFO)
-        << __func__
-        << ": Registering path /com/google/nearby/medium/ble/advertisement/monitor with AdvertisementMonitorManager at "
-        << adv_monitor_manager_->getProxy().getObjectPath();
+    LOG(INFO) << __func__
+              << ": Registering path "
+                 "/com/google/nearby/medium/ble/advertisement/monitor with "
+                 "AdvertisementMonitorManager at "
+              << adv_monitor_manager_->getProxy().getObjectPath();
     adv_monitor_manager_->SetRegisterMonitorReplyCallback(
         [this](std::optional<sdbus::Error> error) {
           OnRegisterMonitorReply(std::move(error));
@@ -126,67 +142,70 @@ bool BleV2Medium::WaitForAdvertisementMonitorManager() {
     return true;
   }
 
-  LOG(WARNING) << __func__
-               << ": AdvertisementMonitorManager registration failed with name '"
-               << adv_monitor_manager_error_name_ << "' and message '"
-               << adv_monitor_manager_error_message_ << "'";
+  LOG(WARNING)
+      << __func__
+      << ": AdvertisementMonitorManager registration failed with name '"
+      << adv_monitor_manager_error_name_ << "' and message '"
+      << adv_monitor_manager_error_message_ << "'";
   return false;
 }
 
-  // sync api
-  // called twice. Once with extended regular advertisement ( when IsExtendedAdvertisementsAvailable() == true )
-  // and another for GATT-backed header advertisement for legacy devices
-  bool BleV2Medium::StartAdvertising(
-    const api::ble::BleAdvertisementData &advertising_data,
+// sync api
+// called twice. Once with extended regular advertisement ( when
+// IsExtendedAdvertisementsAvailable() == true ) and another for GATT-backed
+// header advertisement for legacy devices
+bool BleV2Medium::StartAdvertising(
+    const api::ble::BleAdvertisementData& advertising_data,
     api::ble::AdvertiseParameters advertise_set_parameters) {
-    //if (!advertising_data.is_extended_advertisement)
-    //{
-    //  // can't send two LE advertisements at the same
-    //  return true;
-    //}
-    if (!adapter_.IsEnabled()) {
-      LOG(WARNING) << "BLE cannot start advertising because the "
-                            "bluetooth adapter is not enabled.";
-      return false;
-    }
-
-    if (advertising_data.service_data.empty()) {
-      LOG(WARNING)
-        << "BLE cannot start to advertise due to invalid service data.";
-      return false;
-    }
-
-    absl::MutexLock l (&advs_mutex_);
-    advs_.push_front(bluez::LEAdvertisement::CreateLEAdvertisement(
-      *system_bus_, advertising_data, advertise_set_parameters));
-    auto it = advs_.begin();
-
-
-    LOG(INFO) << __func__ << ": Registering advertisement, is_extended: " << advertising_data.is_extended_advertisement
-                  << " " << (*it) -> getObject().getObjectPath() << " on bluetooth adapter "
-                    << adapter_.GetObjectPath();
-
-    try {
-      adv_manager_->RegisterAdvertisementSync((*it)->getObject().getObjectPath(), {});
-    } catch (const sdbus::Error &e) {
-      advs_.erase(it);
-      DBUS_LOG_METHOD_CALL_ERROR(adv_manager_, "RegisterAdvertisementSync", e);
-      return false;
-    }
-
-    return true;
+  // if (!advertising_data.is_extended_advertisement)
+  //{
+  //   // can't send two LE advertisements at the same
+  //   return true;
+  // }
+  if (!adapter_.IsEnabled()) {
+    LOG(WARNING) << "BLE cannot start advertising because the "
+                    "bluetooth adapter is not enabled.";
+    return false;
   }
 
-//async api
-// runs with nearby presence
+  if (advertising_data.service_data.empty()) {
+    LOG(WARNING)
+        << "BLE cannot start to advertise due to invalid service data.";
+    return false;
+  }
+
+  absl::MutexLock l(&advs_mutex_);
+  advs_.push_front(bluez::LEAdvertisement::CreateLEAdvertisement(
+      *system_bus_, advertising_data, advertise_set_parameters));
+  auto it = advs_.begin();
+
+  LOG(INFO) << __func__ << ": Registering advertisement, is_extended: "
+            << advertising_data.is_extended_advertisement << " "
+            << (*it)->getObject().getObjectPath() << " on bluetooth adapter "
+            << adapter_.GetObjectPath();
+
+  try {
+    adv_manager_->RegisterAdvertisementSync((*it)->getObject().getObjectPath(),
+                                            {});
+  } catch (const sdbus::Error& e) {
+    advs_.erase(it);
+    DBUS_LOG_METHOD_CALL_ERROR(adv_manager_, "RegisterAdvertisementSync", e);
+    return false;
+  }
+
+  return true;
+}
+
+// async api
+//  runs with nearby presence
 std::unique_ptr<api::ble::BleMedium::AdvertisingSession>
 BleV2Medium::StartAdvertising(
-  const api::ble::BleAdvertisementData &advertising_data,
-  api::ble::AdvertiseParameters advertise_set_parameters,
-  AdvertisingCallback callback) {
+    const api::ble::BleAdvertisementData& advertising_data,
+    api::ble::AdvertiseParameters advertise_set_parameters,
+    AdvertisingCallback callback) {
   if (!adapter_.IsEnabled()) {
     LOG(WARNING) << ": BLE cannot start advertising because the "
-                            "bluetooth adapter is not enabled.";
+                    "bluetooth adapter is not enabled.";
     return nullptr;
   }
 
@@ -197,19 +216,20 @@ BleV2Medium::StartAdvertising(
   }
 
   std::shared_ptr<AdvertisingCallback> shared_cb =
-    std::make_shared<AdvertisingCallback>(std::move(callback));
+      std::make_shared<AdvertisingCallback>(std::move(callback));
 
   absl::MutexLock lock(&advs_mutex_);
   advs_.push_front(bluez::LEAdvertisement::CreateLEAdvertisement(
-    *system_bus_, advertising_data, advertise_set_parameters));
+      *system_bus_, advertising_data, advertise_set_parameters));
   auto adv_it = advs_.begin();
 
   // Keep async API surface, but register using the same typed DBus path as the
   // working sync implementation to avoid signature mismatch (oa{sv} vs sa{sv}).
   try {
-    adv_manager_->RegisterAdvertisementSync((*adv_it)->getObject().getObjectPath(), {});
+    adv_manager_->RegisterAdvertisementSync(
+        (*adv_it)->getObject().getObjectPath(), {});
     shared_cb->start_advertising_result(absl::OkStatus());
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     advs_.erase(adv_it);
     DBUS_LOG_METHOD_CALL_ERROR(adv_manager_, "RegisterAdvertisementSync", e);
     auto name = e.getName();
@@ -231,44 +251,46 @@ BleV2Medium::StartAdvertising(
 
   absl::AnyInvocable<absl::Status()> stop_adv = [&, adv_it]() {
     LOG(INFO) << __func__ << ": Unregistering advertisement object "
-                         << (*adv_it)->getObject().getObjectPath();
+              << (*adv_it)->getObject().getObjectPath();
     absl::MutexLock lock(&advs_mutex_);
     try {
-      adv_manager_->UnregisterAdvertisementSync((*adv_it)->getObject().getObjectPath());
-    } catch (const sdbus::Error &e) {
-      DBUS_LOG_METHOD_CALL_ERROR(adv_manager_, "UnregisterAdvertisementSync", e);
+      adv_manager_->UnregisterAdvertisementSync(
+          (*adv_it)->getObject().getObjectPath());
+    } catch (const sdbus::Error& e) {
+      DBUS_LOG_METHOD_CALL_ERROR(adv_manager_, "UnregisterAdvertisementSync",
+                                 e);
       return absl::UnknownError(e.getMessage());
     }
     advs_.erase(adv_it);
     return absl::OkStatus();
   };
   return std::make_unique<api::ble::BleMedium::AdvertisingSession>(
-    api::ble::BleMedium::AdvertisingSession{std::move(stop_adv)});
+      api::ble::BleMedium::AdvertisingSession{std::move(stop_adv)});
 }
 
-  bool BleV2Medium::StopAdvertising() {
-    absl::MutexLock l(&advs_mutex_);
-    try {
-      for (auto& adv: advs_)
-      {
-        adv_manager_->UnregisterAdvertisementSync(adv->getObject().getObjectPath());
-      }
-    } catch (const sdbus::Error &e) {
-      DBUS_LOG_METHOD_CALL_ERROR(adv_manager_, "UnregisterAdvertisementSync", e);
-      return false;
+bool BleV2Medium::StopAdvertising() {
+  LOG(INFO) << __func__ << ": Stop advertising called";
+  absl::MutexLock l(&advs_mutex_);
+  try {
+    for (auto& adv : advs_) {
+      adv_manager_->UnregisterAdvertisementSync(
+          adv->getObject().getObjectPath());
     }
-
-    advs_.clear();
-    return true;
+  } catch (const sdbus::Error& e) {
+    DBUS_LOG_METHOD_CALL_ERROR(adv_manager_, "UnregisterAdvertisementSync", e);
+    return false;
   }
 
-bool BleV2Medium::StartScanning(const Uuid &service_uuid,
+  advs_.clear();
+  return true;
+}
+
+bool BleV2Medium::StartScanning(const Uuid& service_uuid,
                                 api::ble::TxPowerLevel tx_power_level,
                                 ScanCallback callback) {
   if (cur_monitored_service_uuid_.has_value()) {
-    LOG(ERROR) << __func__
-                       << ": A sync scanning session is already active for "
-                       << std::string{*cur_monitored_service_uuid_};
+    LOG(ERROR) << __func__ << ": A sync scanning session is already active for "
+               << std::string{*cur_monitored_service_uuid_};
     return false;
   }
 
@@ -288,59 +310,58 @@ bool BleV2Medium::StartScanning(const Uuid &service_uuid,
   absl::MutexLock lock(&active_adv_monitors_mutex_);
   if (active_adv_monitors_.count(service_uuid) == 1) {
     LOG(ERROR) << __func__ << ": an advertising session for service "
-                       << std::string{service_uuid} << " already exists";
+               << std::string{service_uuid} << " already exists";
     return false;
   }
 
   auto monitor = std::make_unique<bluez::AdvertisementMonitor>(
-    *system_bus_, service_uuid, tx_power_level, "or_patterns", devices_,
-    std::move(callback));
+      *system_bus_, service_uuid, tx_power_level, "or_patterns", devices_,
+      std::move(callback));
   try {
     // why is this emitted?
-    monitor->emitInterfacesAddedSignal(
-      {sdbus::InterfaceName(org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
+    monitor->emitInterfacesAddedSignal({sdbus::InterfaceName(
+        org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
 
-    // adv_monitor_manager_ -> RegisterMonitor(monitor -> getObject().getObjectPath());
-    LOG(INFO)<< __func__ << ": Registered advertisement monitor with path " << monitor -> getObject().getObjectPath();
-  } catch (const sdbus::Error &e) {
-    LOG(ERROR)
-        << __func__
-        << ": error emitting InterfacesAdded signal for object path "
-        << monitor->getObject().getObjectPath() << " with name '" << e.getName()
-        << "' and message '" << e.getMessage() << "'";
+    // adv_monitor_manager_ -> RegisterMonitor(monitor ->
+    // getObject().getObjectPath());
+    LOG(INFO) << __func__ << ": Registered advertisement monitor with path "
+              << monitor->getObject().getObjectPath();
+  } catch (const sdbus::Error& e) {
+    LOG(ERROR) << __func__
+               << ": error emitting InterfacesAdded signal for object path "
+               << monitor->getObject().getObjectPath() << " with name '"
+               << e.getName() << "' and message '" << e.getMessage() << "'";
     return false;
   }
   auto device_watcher = std::make_unique<DeviceWatcher>(
-    *system_bus_, adapter_.GetObjectPath(), adapter_, devices_);
+      *system_bus_, adapter_.GetObjectPath(), adapter_, devices_);
   if (!StartLEDiscovery()) {
-    LOG(ERROR) << __func__
-                       << ": Could not start LE discovery on adapter "
-                       << adapter_.GetObjectPath();
+    LOG(ERROR) << __func__ << ": Could not start LE discovery on adapter "
+               << adapter_.GetObjectPath();
     device_watcher = nullptr;
     try {
-      monitor->emitInterfacesRemovedSignal(
-        {sdbus::InterfaceName(org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
-    } catch (const sdbus::Error &e) {
-      LOG(ERROR)
-          << __func__
-          << ": error emitting InterfacesRemoved signal for object path "
-          << monitor->getObject().getObjectPath() << " with name '" << e.getName()
-          << "' and message '" << e.getMessage() << "'";
+      monitor->emitInterfacesRemovedSignal({sdbus::InterfaceName(
+          org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
+    } catch (const sdbus::Error& e) {
+      LOG(ERROR) << __func__
+                 << ": error emitting InterfacesRemoved signal for object path "
+                 << monitor->getObject().getObjectPath() << " with name '"
+                 << e.getName() << "' and message '" << e.getMessage() << "'";
     }
     return false;
   }
-  LOG(INFO) << __func__ << " :Started monitoring for service UUID: " << std::string(service_uuid);
+  LOG(INFO) << __func__ << " :Started monitoring for service UUID: "
+            << std::string(service_uuid);
 
   active_adv_monitors_[service_uuid] =
-    std::make_pair(std::move(monitor), std::move(device_watcher));
+      std::make_pair(std::move(monitor), std::move(device_watcher));
   cur_monitored_service_uuid_ = service_uuid;
   return true;
 }
 
 bool BleV2Medium::StopScanning() {
   if (!cur_monitored_service_uuid_.has_value()) {
-    LOG(ERROR) << __func__
-                       << ": No sync scanning session is currently active.";
+    LOG(ERROR) << __func__ << ": No sync scanning session is currently active.";
     return false;
   }
 
@@ -349,12 +370,13 @@ bool BleV2Medium::StopScanning() {
     return false;
   }
 
-  auto &adapter = adapter_.GetBluezAdapterObject();
+  auto& adapter = adapter_.GetBluezAdapterObject();
   LOG(INFO) << __func__ << ": Stopping discovery for adapter "
-                       << adapter.getProxy().getObjectPath();
+            << adapter.getProxy().getObjectPath();
   try {
-    adapter.StopDiscovery(); // this will stop bluetooth classic discovery as well. do we want this?
-  } catch (const sdbus::Error &e) {
+    adapter.StopDiscovery();  // this will stop bluetooth classic discovery as
+                              // well. do we want this?
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_METHOD_CALL_ERROR(&adapter, "StopDiscovery", e);
   }
 
@@ -362,120 +384,116 @@ bool BleV2Medium::StopScanning() {
   auto monitor_it = active_adv_monitors_.find(*cur_monitored_service_uuid_);
   assert(monitor_it != active_adv_monitors_.end());
   {
-    auto &[_uuid, session] = *monitor_it;
-    auto &[adv_monitor, _watcher] = session;
+    auto& [_uuid, session] = *monitor_it;
+    auto& [adv_monitor, _watcher] = session;
 
     LOG(INFO) << __func__ << ": Removing advertising monitor "
-                         << adv_monitor->getObject().getObjectPath();
-    adv_monitor->emitInterfacesRemovedSignal(
-      {sdbus::InterfaceName(org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
+              << adv_monitor->getObject().getObjectPath();
+    adv_monitor->emitInterfacesRemovedSignal({sdbus::InterfaceName(
+        org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
   }
   active_adv_monitors_.erase(monitor_it);
   cur_monitored_service_uuid_ = std::nullopt;
 
   return true;
 }
-  std::unique_ptr<api::ble::BleMedium::ScanningSession>
-  BleV2Medium::StartScanning(const Uuid &service_uuid,
-                             api::ble::TxPowerLevel tx_power_level,
-                             ScanningCallback callback) {
-    if (!WaitForAdvertisementMonitorManager()) {
-      // TODO: Implement manual monitoring.
-      return nullptr;
-    }
+std::unique_ptr<api::ble::BleMedium::ScanningSession>
+BleV2Medium::StartScanning(const Uuid& service_uuid,
+                           api::ble::TxPowerLevel tx_power_level,
+                           ScanningCallback callback) {
+  if (!WaitForAdvertisementMonitorManager()) {
+    // TODO: Implement manual monitoring.
+    return nullptr;
+  }
 
-    absl::MutexLock lock(&active_adv_monitors_mutex_);
-    if (active_adv_monitors_.count(service_uuid) == 1) {
-      LOG(ERROR) << __func__ << ": Service " << std::string{service_uuid}
-                       << " is already being advertised";
-      return nullptr;
-    }
+  absl::MutexLock lock(&active_adv_monitors_mutex_);
+  if (active_adv_monitors_.count(service_uuid) == 1) {
+    LOG(ERROR) << __func__ << ": Service " << std::string{service_uuid}
+               << " is already being advertised";
+    return nullptr;
+  }
 
-    auto monitor = std::make_unique<bluez::AdvertisementMonitor>(
+  auto monitor = std::make_unique<bluez::AdvertisementMonitor>(
       *system_bus_, service_uuid, tx_power_level, "or_patterns", devices_,
       std::move(callback));
+  try {
+    monitor->emitInterfacesAddedSignal({sdbus::InterfaceName(
+        org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
+  } catch (const sdbus::Error& e) {
+    LOG(ERROR) << __func__
+               << ": error emitting InterfacesAdded signal for object path "
+               << monitor->getObject().getObjectPath() << " with name '"
+               << e.getName() << "' and message '" << e.getMessage() << "'";
+    return nullptr;
+  }
+
+  auto device_watcher = std::make_unique<DeviceWatcher>(
+      *system_bus_, adapter_.GetObjectPath(), adapter_, devices_);
+  if (!StartLEDiscovery()) {
+    LOG(ERROR) << __func__ << ": Could not start LE discovery on adapter "
+               << adapter_.GetObjectPath();
     try {
-      monitor->emitInterfacesAddedSignal(
-        {sdbus::InterfaceName(org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
-    } catch (const sdbus::Error &e) {
-      LOG(ERROR)
-        << __func__
-        << ": error emitting InterfacesAdded signal for object path "
-        << monitor->getObject().getObjectPath() << " with name '" << e.getName()
-        << "' and message '" << e.getMessage() << "'";
-      return nullptr;
-    }
-
-    auto device_watcher = std::make_unique<DeviceWatcher>(
-      *system_bus_, adapter_.GetObjectPath(),adapter_, devices_);
-    if (!StartLEDiscovery()) {
+      monitor->emitInterfacesRemovedSignal({sdbus::InterfaceName(
+          org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
+    } catch (const sdbus::Error& e) {
       LOG(ERROR) << __func__
-                       << ": Could not start LE discovery on adapter "
-                       << adapter_.GetObjectPath();
-      try {
-        monitor->emitInterfacesRemovedSignal(
-          {sdbus::InterfaceName(org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
-      } catch (const sdbus::Error &e) {
-        LOG(ERROR)
-          << __func__
-          << ": error emitting InterfacesRemoved signal for object path "
-          << monitor->getObject().getObjectPath() << " with name '" << e.getName()
-          << "' and message '" << e.getMessage() << "'";
-      }
-      return nullptr;
+                 << ": error emitting InterfacesRemoved signal for object path "
+                 << monitor->getObject().getObjectPath() << " with name '"
+                 << e.getName() << "' and message '" << e.getMessage() << "'";
     }
+    return nullptr;
+  }
 
-    active_adv_monitors_[service_uuid] =
+  active_adv_monitors_[service_uuid] =
       std::make_pair(std::move(monitor), std::move(device_watcher));
 
-    return std::make_unique<ScanningSession>(
+  return std::make_unique<ScanningSession>(
       ScanningSession{.stop_scanning = [this, service_uuid]() {
         absl::MutexLock lock(&active_adv_monitors_mutex_);
         if (active_adv_monitors_.count(service_uuid) == 0) {
-          LOG(ERROR)
-              << __func__ << ": Advertising monitor for service "
-              << std::string{service_uuid} << " does not exist anymore";
+          LOG(ERROR) << __func__ << ": Advertising monitor for service "
+                     << std::string{service_uuid} << " does not exist anymore";
           return absl::NotFoundError(
-            "Advertising monitor for this service does not exist");
+              "Advertising monitor for this service does not exist");
         }
 
-        auto &[monitor, watcher] = active_adv_monitors_[service_uuid];
+        auto& [monitor, watcher] = active_adv_monitors_[service_uuid];
         try {
-          monitor->emitInterfacesRemovedSignal(
-            {sdbus::InterfaceName(org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
-        } catch (const sdbus::Error &e) {
+          monitor->emitInterfacesRemovedSignal({sdbus::InterfaceName(
+              org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
+        } catch (const sdbus::Error& e) {
           LOG(ERROR)
               << __func__
               << ": error emitting InterfacesRemoved signal for object path "
-              << monitor->getObject().getObjectPath() << " with name '" << e.getName()
-              << "' and message '" << e.getMessage() << "'";
+              << monitor->getObject().getObjectPath() << " with name '"
+              << e.getName() << "' and message '" << e.getMessage() << "'";
         }
 
-        auto &adapter = adapter_.GetBluezAdapterObject();
+        auto& adapter = adapter_.GetBluezAdapterObject();
         absl::Status status;
         try {
           adapter.StopDiscovery();
           status = absl::OkStatus();
-        } catch (const sdbus::Error &e) {
+        } catch (const sdbus::Error& e) {
           DBUS_LOG_METHOD_CALL_ERROR(&adapter, "StopDiscovery", e);
           status = absl::InternalError(e.getMessage());
         }
         active_adv_monitors_.erase(service_uuid);
         return status;
       }});
-  }
+}
 
 std::unique_ptr<api::ble::GattServer> BleV2Medium::StartGattServer(
-  api::ble::ServerGattConnectionCallback callback) {
+    api::ble::ServerGattConnectionCallback callback) {
   LOG(INFO) << __func__ << ": Starting Linux GATT server.";
   return std::make_unique<GattServer>(*system_bus_, adapter_, devices_,
                                       std::move(callback));
 }
 
 std::unique_ptr<api::ble::GattClient> BleV2Medium::ConnectToGattServer(
-  api::ble::BlePeripheral::UniqueId peripheral_id,
-  api::ble::TxPowerLevel tx_power_level,
-  api::ble::ClientGattConnectionCallback callback) {
+    api::ble::BlePeripheral::UniqueId peripheral_id,
+    api::ble::TxPowerLevel tx_power_level,
+    api::ble::ClientGattConnectionCallback callback) {
   auto device = devices_->get_device_by_unique_id(peripheral_id);
   if (!device) {
     LOG(ERROR) << __func__ << ": Failed to find device with unique ID "
@@ -495,29 +513,29 @@ std::unique_ptr<api::ble::GattClient> BleV2Medium::ConnectToGattServer(
 }
 
 std::unique_ptr<api::ble::BleServerSocket> BleV2Medium::OpenServerSocket(
-  const std::string &service_id) {
+    const std::string& service_id) {
   LOG(INFO) << __func__ << ": Opening BLE server socket for service "
             << service_id;
   return std::make_unique<BleV2ServerSocket>(service_id);
 }
 
 std::unique_ptr<api::ble::BleL2capServerSocket>
-BleV2Medium::OpenL2capServerSocket(const std::string &service_id) {
+BleV2Medium::OpenL2capServerSocket(const std::string& service_id) {
   // return nullptr;
   LOG(INFO) << __func__ << ": Opening L2CAP server socket for service "
             << service_id;
 
-  auto server_socket = std::make_unique<linux::BleL2capServerSocket>(
-      psm_, service_id);
+  auto server_socket =
+      std::make_unique<linux::BleL2capServerSocket>(psm_, service_id);
 
   return server_socket;
 }
 
 // This is supposed to be for a socket on top of Weave protocol.
 std::unique_ptr<api::ble::BleSocket> BleV2Medium::Connect(
-  const std::string &service_id, api::ble::TxPowerLevel tx_power_level,
-  api::ble::BlePeripheral::UniqueId peripheral_id,
-  CancellationFlag *cancellation_flag) {
+    const std::string& service_id, api::ble::TxPowerLevel tx_power_level,
+    api::ble::BlePeripheral::UniqueId peripheral_id,
+    CancellationFlag* cancellation_flag) {
   LOG(INFO) << __func__ << ": Not implemented on linux ";
   return nullptr;
 }
@@ -526,7 +544,7 @@ bool BleV2Medium::IsExtendedAdvertisementsAvailable() {
   try {
     auto supported_channels = adv_manager_->SupportedSecondaryChannels();
     return !supported_channels.empty();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_PROPERTY_GET_ERROR(adv_manager_, "SupportedSecondaryChannels", e);
     return false;
   }
@@ -536,20 +554,20 @@ bool BleV2Medium::StartLEDiscovery() {
   std::map<std::string, sdbus::Variant> filter;
   filter["Transport"] = sdbus::Variant("auto");
   filter["DuplicateData"] = sdbus::Variant(true);
-  auto &adapter = adapter_.GetBluezAdapterObject();
+  auto& adapter = adapter_.GetBluezAdapterObject();
 
   try {
     adapter.SetDiscoveryFilter(filter);
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_METHOD_CALL_ERROR(&adapter, "SetDiscoveryFilter", e);
     return false;
   }
 
   try {
     LOG(INFO) << __func__ << ": Starting LE discovery on "
-                      << adapter.getProxy().getObjectPath();
+              << adapter.getProxy().getObjectPath();
     adapter.StartDiscovery();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     if (e.getName() != "org.bluez.Error.InProgress") {
       DBUS_LOG_METHOD_CALL_ERROR(&adapter, "StartDiscovery", e);
       return false;
@@ -563,15 +581,15 @@ bool BleV2Medium::StartLEDiscovery() {
 //     const std::string &service_id, api::ble::TxPowerLevel tx_power_level,
 //     api::ble::BlePeripheral &peripheral,
 //     CancellationFlag *cancellation_flag) {
-//   LOG(WARNING) << __func__ << ": BLE socket connections not implemented on Linux";
-//   return nullptr;
+//   LOG(WARNING) << __func__ << ": BLE socket connections not implemented on
+//   Linux"; return nullptr;
 // }
 
 std::unique_ptr<api::ble::BleL2capSocket> BleV2Medium::ConnectOverL2cap(
-    int psm, const std::string &service_id,
+    int psm, const std::string& service_id,
     api::ble::TxPowerLevel tx_power_level,
     api::ble::BlePeripheral::UniqueId peripheral_id,
-    CancellationFlag *cancellation_flag) {
+    CancellationFlag* cancellation_flag) {
   // return nullptr;
   auto device = devices_->get_device_by_unique_id(peripheral_id);
   if (!device) {
@@ -580,40 +598,39 @@ std::unique_ptr<api::ble::BleL2capSocket> BleV2Medium::ConnectOverL2cap(
     return nullptr;
   }
 
-  LOG(INFO) << __func__ << ": Connecting to L2CAP PSM " << psm
-            << " on device " << device->GetMacAddress().ToString();
-
+  LOG(INFO) << __func__ << ": Connecting to L2CAP PSM " << psm << " on device "
+            << device->GetMacAddress().ToString();
 
   int fd = socket(AF_BLUETOOTH, SOCK_SEQPACKET, BTPROTO_L2CAP);
   if (fd < 0) {
-    LOG(ERROR) << __func__ << ": Failed to create L2CAP socket: "
-               << std::strerror(errno);
+    LOG(ERROR) << __func__
+               << ": Failed to create L2CAP socket: " << std::strerror(errno);
     return nullptr;
   }
 
   // Set receive MTU before connect (for LE CoC)
 
-
   struct sockaddr_l2 addr;
   std::memset(&addr, 0, sizeof(addr));
   addr.l2_family = AF_BLUETOOTH;
   addr.l2_psm = htobs(psm);
-  if (device -> GetAddressType() == "random") {
+  if (device->GetAddressType() == "random") {
     addr.l2_bdaddr_type = BDADDR_LE_RANDOM;
-  }else {
+  } else {
     addr.l2_bdaddr_type = BDADDR_LE_PUBLIC;
   }
 
-  if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
+  if (bind(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
     LOG(INFO) << "Failed to bind L2CAP socket";
   }
 
   struct l2cap_options opts;
   opts.omtu = 0;
   opts.imtu = 672;
-  if (setsockopt(fd, SOL_BLUETOOTH, BT_RCVMTU, &opts.imtu, sizeof(opts.imtu)) < 0) {
-    LOG(WARNING) << __func__ << ": Failed to set BT_RCVMTU: "
-                 << std::strerror(errno);
+  if (setsockopt(fd, SOL_BLUETOOTH, BT_RCVMTU, &opts.imtu, sizeof(opts.imtu)) <
+      0) {
+    LOG(WARNING) << __func__
+                 << ": Failed to set BT_RCVMTU: " << std::strerror(errno);
   }
   std::string mac_addr = device->GetMacAddress().ToString();
   if (str2ba(mac_addr.c_str(), &addr.l2_bdaddr) < 0) {
@@ -630,13 +647,12 @@ std::unique_ptr<api::ble::BleL2capSocket> BleV2Medium::ConnectOverL2cap(
   }
 
   LOG(INFO) << __func__ << ": Successfully connected to L2CAP socket";
-  auto socket = std::make_unique<BleL2capSocket>(
-      fd, peripheral_id, service_id);
+  auto socket = std::make_unique<BleL2capSocket>(fd, peripheral_id, service_id);
   return socket;
 }
 
 bool BleV2Medium::StartMultipleServicesScanning(
-    const std::vector<Uuid> &service_uuids,
+    const std::vector<Uuid>& service_uuids,
     api::ble::TxPowerLevel tx_power_level, ScanCallback callback) {
   LOG(WARNING) << __func__
                << ": Multiple services scanning not implemented on Linux. "
@@ -645,24 +661,27 @@ bool BleV2Medium::StartMultipleServicesScanning(
 }
 
 bool BleV2Medium::PauseMediumScanning() {
-  LOG(INFO) << __func__ << ": Pause scanning not implemented, returning success";
+  LOG(INFO) << __func__
+            << ": Pause scanning not implemented, returning success";
   return true;
 }
 
 bool BleV2Medium::ResumeMediumScanning() {
-  LOG(INFO) << __func__ << ": Resume scanning not implemented, returning success";
+  LOG(INFO) << __func__
+            << ": Resume scanning not implemented, returning success";
   return true;
 }
 
 void BleV2Medium::AddAlternateUuidForService(uint16_t uuid,
-                                             const std::string &service_id) {
-  LOG(INFO) << __func__ << ": Alternate UUID mapping not implemented. UUID: "
-            << uuid << ", service_id: " << service_id;
+                                             const std::string& service_id) {
+  LOG(INFO) << __func__
+            << ": Alternate UUID mapping not implemented. UUID: " << uuid
+            << ", service_id: " << service_id;
 }
 
 std::optional<api::ble::BlePeripheral::UniqueId>
 BleV2Medium::RetrieveBlePeripheralIdFromNativeId(
-    const std::string &ble_peripheral_native_id) {
+    const std::string& ble_peripheral_native_id) {
   LOG(WARNING) << __func__
                << ": Retrieval from native ID not implemented. Native ID: "
                << ble_peripheral_native_id;

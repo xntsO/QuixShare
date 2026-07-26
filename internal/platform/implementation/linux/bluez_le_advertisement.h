@@ -16,6 +16,7 @@
 #define PLATFORM_IMPL_LINUX_API_BLUEZ_BLE_ADVERTISEMENT_H_
 
 #include <future>
+#include <absl/log/log.h>
 #include <sdbus-c++/AdaptorInterfaces.h>
 #include <sdbus-c++/IConnection.h>
 #include <sdbus-c++/ProxyInterfaces.h>
@@ -54,7 +55,9 @@ class LEAdvertisement final
     return std::make_unique<LEAdvertisement>(
         system_bus, object_path, advertising_data, advertising_parameters);
   }
-  ~LEAdvertisement() { unregisterAdaptor(); }
+  ~LEAdvertisement() { 
+    LOG(INFO) << __func__ << "Unregistering advertisement adaptor";
+    unregisterAdaptor(); }
 
  private:
   // Methods

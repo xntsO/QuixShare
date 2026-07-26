@@ -53,6 +53,8 @@ class WifiDirect {
   bool IsGOAvailable() const ABSL_LOCKS_EXCLUDED(mutex_);
   // Returns true, if WifiDirect Group Client is supported by a platform.
   bool IsGCAvailable() const ABSL_LOCKS_EXCLUDED(mutex_);
+  // Returns true if this medium is restricted to the Group Client role.
+  bool IsGCONly() const { return is_gc_only_; }
 
   // If WifiDirect Group Owner started
   bool IsGOStarted() ABSL_LOCKS_EXCLUDED(mutex_);
@@ -127,6 +129,7 @@ class WifiDirect {
 
   bool is_go_started_ ABSL_GUARDED_BY(mutex_);
   bool is_connected_to_go_ ABSL_GUARDED_BY(mutex_);
+  const bool is_gc_only_;
   WifiDirectMedium medium_ ABSL_GUARDED_BY(mutex_);
 
   // A thread pool dedicated to running all the accept loops from

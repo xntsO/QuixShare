@@ -217,6 +217,20 @@ void BwuManager::InitiateBwuForEndpoint(ClientProxy* client,
                 endpoint_id,
                 client->GetUpgradeMediums(endpoint_id).GetMediums(true))
           : new_medium;
+  if (proposed_medium == Medium::WIFI_DIRECT &&
+      mediums_->GetWifiDirect().IsGCONly()) {
+    std::vector<Medium> fallback_mediums =
+        client->GetUpgradeMediums(endpoint_id).GetMediums(true);
+    fallback_mediums.erase(
+        std::remove(fallback_mediums.begin(), fallback_mediums.end(),
+                    Medium::WIFI_DIRECT),
+        fallback_mediums.end());
+    proposed_medium = ChooseBestUpgradeMedium(endpoint_id, fallback_mediums);
+    LOG(INFO) << "Wi-Fi Direct is GC-only; selected fallback medium "
+              << location::nearby::proto::connections::Medium_Name(
+                     proposed_medium)
+              << " for endpoint " << endpoint_id;
+  }
 
   RunOnBwuManagerThread("bwu-init", [this, client, endpoint_id,
                                      proposed_medium]() {
@@ -800,7 +814,12 @@ void BwuManager::ProcessBwuPathAvailableEvent(
 
   bool abort_bwu = false;
   if (client->IsIncomingConnection(endpoint_id)) {
-    if (!is_dynamic_role_switch_enabled_) {
+    if (upgrade_medium == Medium::WIFI_DIRECT &&
+        mediums_->GetWifiDirect().IsGCONly()) {
+      // A GC-only device can consume a standard path offered by a peer GO,
+      // regardless of which side initiated the original connection.
+      abort_bwu = false;
+    } else if (!is_dynamic_role_switch_enabled_) {
       abort_bwu = true;
     } else {
       auto medium_role = client->GetMediumRole(endpoint_id);

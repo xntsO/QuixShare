@@ -14,15 +14,17 @@
 
 #include "connections/implementation/mediums/wifi_direct.h"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
-#include <algorithm>
 
 #include "absl/strings/string_view.h"
 #include "connections/implementation/bwu_handler.h"
+#include "connections/implementation/flags/nearby_connections_feature_flags.h"
 #include "connections/implementation/mediums/wifi_direct_bwu_handler.h"
+#include "internal/flags/nearby_flags.h"
 #include "internal/platform/cancellation_flag.h"
 #include "internal/platform/expected.h"
 #include "internal/platform/logging.h"
@@ -36,7 +38,12 @@ namespace {
 using ::location::nearby::proto::connections::OperationResultCode;
 }  // namespace
 
-WifiDirect::WifiDirect() : is_go_started_(false), is_connected_to_go_(false) {
+WifiDirect::WifiDirect()
+    : is_go_started_(false),
+      is_connected_to_go_(false),
+      is_gc_only_(NearbyFlags::GetInstance().GetBoolFlag(
+          config_package_nearby::nearby_connections_feature::
+              kEnableWifiDirectGcOnly)) {
   supported_wifi_direct_auth_types_ = medium_.GetSupportedWifiDirectAuthTypes();
   if (!supported_wifi_direct_auth_types_.empty()) {
     preferred_wifi_direct_auth_type_ =
@@ -63,6 +70,7 @@ bool WifiDirect::IsGOAvailable() const {
 }
 
 bool WifiDirect::IsGOAvailableLocked() const {
+  if (is_gc_only_) return false;
   if (medium_.IsValid()) return medium_.IsInterfaceValid();
   return false;
 }
@@ -88,6 +96,10 @@ bool WifiDirect::IsGOStarted() {
 // connect
 bool WifiDirect::StartWifiDirect() {
   MutexLock lock(&mutex_);
+  if (is_gc_only_) {
+    LOG(INFO) << "Can't start WifiDirect GO in GC-only mode.";
+    return false;
+  }
   if (is_go_started_) {
     LOG(INFO) << "No need to start GO because it is already started.";
     return true;
