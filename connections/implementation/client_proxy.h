@@ -75,6 +75,9 @@ class ClientProxy final {
 
   std::string GetLocalEndpointId();
   std::string GetLocalEndpointInfo() { return local_endpoint_info_; }
+  std::string GetLocalDeviceName() {
+    return local_device_name_;
+  }
 
   // Override the base for received file attachments from a specific endpoint.
   // Returns true if the endpoint is found and the path is overridden.
@@ -102,6 +105,9 @@ class ClientProxy final {
 
   // Clears all the runtime state of this client.
   void Reset();
+
+  // Resets the local endpoint ID and sets the last local endpoint ID.
+  void ResetLocalEndpointId();
 
   // Marks this client as advertising with the given callbacks.
   void StartedAdvertising(
@@ -145,7 +151,6 @@ class ClientProxy final {
     MutexLock lock(&mutex_);
     local_endpoint_info_ = std::string(endpoint_info);
   }
-
   void UpdateAdvertisingOptions(const AdvertisingOptions& advertising_options) {
     MutexLock lock(&mutex_);
     advertising_options_ = advertising_options;
@@ -210,6 +215,14 @@ class ClientProxy final {
   // Returns true if there is at least one connected connection or one pending
   // connection.
   bool HasOngoingConnection() const;
+  // Returns true if there is at least one active WiFi Direct connection.
+  bool HasWifiDirectConnection() const;
+  // Returns true if there is at least one active WiFi Hotspot connection.
+  bool HasWifiHotspotConnection() const;
+  // Returns true if there is at least one active WiFi Aware connection.
+  bool HasWifiAwareConnection() const;
+  std::string GetLastLocalEndpointId() const;
+  void SetLastLocalEndpointId(absl::string_view endpoint_id);
   // Returns the number of endpoints that are connected and outgoing.
   std::int32_t GetNumOutgoingConnections() const;
   // Returns the number of endpoints that are connected and incoming.
@@ -287,6 +300,9 @@ class ClientProxy final {
   void SetRemoteOsInfo(
       absl::string_view endpoint_id,
       const location::nearby::connections::OsInfo& remote_os_info);
+  void SetRemoteDeviceName(absl::string_view endpoint_id,
+                           absl::string_view device_name);
+  std::string GetRemoteDeviceName(absl::string_view endpoint_id) const;
 
   void RegisterDeviceProvider(NearbyDeviceProvider* provider) {
     external_device_provider_ = provider;
@@ -333,6 +349,18 @@ class ClientProxy final {
   std::optional<location::nearby::connections::MediumRole> GetMediumRole(
       absl::string_view endpoint_id) const;
 
+  struct MediumsAvailability {
+    bool is_wifi_direct_go_available = false;
+    bool is_wifi_direct_gc_available = false;
+    bool is_wifi_hotspot_ap_available = false;
+    bool is_wifi_hotspot_client_available = false;
+  };
+
+  location::nearby::connections::MediumRole GetLocalMediumRole(
+      const MediumsAvailability& mediums_availability) const;
+
+  bool IsUsingP2pMedium() const;
+
   // Forces client to regenerate a new local endpoint id.
   void ClearCachedLocalEndpointId();
 
@@ -372,6 +400,7 @@ class ClientProxy final {
     std::int32_t safe_to_disconnect_version;
     std::int32_t remote_multiplex_socket_bitmask;
     std::string save_path;
+    std::string device_name;
   };
   using ConnectionPair = std::pair<Connection, PayloadListener>;
 
@@ -441,6 +470,8 @@ class ClientProxy final {
   std::int64_t client_id_;
   std::string local_endpoint_id_;
   std::string local_endpoint_info_;
+  std::string last_local_endpoint_id_;
+  std::string local_device_name_;
 
   // If advertising is in stable endpoint ID mode, the endpoint ID is stable
   // for 30s after advertising or disconnection. When stable_endpoint_id_mode_

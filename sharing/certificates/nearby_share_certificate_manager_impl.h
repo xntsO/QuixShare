@@ -26,8 +26,11 @@
 #include "location/nearby/sharing/lib/account/account_manager.h"
 #include "location/nearby/sharing/lib/rpc/sharing_rpc_client.h"
 #include "absl/base/nullability.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "internal/base/file_path.h"
 #include "internal/platform/task_runner.h"
@@ -92,7 +95,12 @@ class NearbyShareCertificateManagerImpl
   void ForceUploadPrivateCertificates() override;
   void ClearPublicCertificates(std::function<void(bool)> callback) override;
   void SetVendorId(int32_t vendor_id) override;
+  void SetJoinBindingTime(absl::Time join_binding_time,
+                          absl::Duration life_time)
+      ABSL_LOCKS_EXCLUDED(join_time_mutex_) override;
   std::string Dump() const override;
+  void AddBindingToPublicCertificate(
+      absl::string_view certificate_id, absl::string_view binding_id) override;
 
  private:
   // Class for maintaining a single instance of public certificate download
@@ -104,12 +112,14 @@ class NearbyShareCertificateManagerImpl
         nearby::sharing::api::IdentityRpcClient* absl_nonnull
             nearby_identity_client,
         std::string device_id,
+        std::optional<absl::Time> join_time,
         absl::AnyInvocable<void(absl::StatusOr<std::vector<
                                     nearby::sharing::proto::PublicCertificate>>
                                     certificates_status) &&>
             download_callback)
         : nearby_identity_client_(nearby_identity_client),
           device_id_(std::move(device_id)),
+          join_time_(join_time),
           download_callback_(std::move(download_callback)) {}
 
     // Fetches the next page of certificates by calling Identity API
@@ -123,7 +133,8 @@ class NearbyShareCertificateManagerImpl
    private:
     nearby::sharing::api::IdentityRpcClient* absl_nonnull const
         nearby_identity_client_;
-    std::string device_id_;
+    const std::string device_id_;
+    const std::optional<absl::Time> join_time_;
     std::optional<std::string> next_page_token_;
     int page_number_ = 1;
     std::vector<nearby::sharing::proto::PublicCertificate> certificates_;
@@ -219,6 +230,12 @@ class NearbyShareCertificateManagerImpl
       account_info_update_scheduler_;
 
   std::unique_ptr<TaskRunner> executor_;
+  absl::Mutex join_time_mutex_;
+  // Set to the transaction timestamp of the last successful pairing if
+  // available.  This is returned from the phone in the BindingResponse message.
+  std::optional<absl::Time> join_time_ ABSL_GUARDED_BY(join_time_mutex_);
+  // The time when the join_time_ will be discarded.
+  absl::Time join_time_discard_time_ ABSL_GUARDED_BY(join_time_mutex_);
 };
 
 }  // namespace nearby::sharing

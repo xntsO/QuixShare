@@ -34,6 +34,7 @@
 #include "location/nearby/sharing/lib/account/account_manager.h"
 #include "location/nearby/sharing/lib/rpc/sharing_rpc_client.h"
 #include "absl/algorithm/algorithm.h"
+#include "absl/algorithm/container.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/memory/memory.h"
@@ -41,9 +42,11 @@
 #include "absl/strings/escaping.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "third_party/gloop/util/time/protoutil.h"
 #include "internal/base/file_path.h"
 #include "internal/flags/nearby_flags.h"
 #include "internal/platform/mac_address.h"
@@ -383,6 +386,13 @@ void NearbyShareCertificateManagerImpl::CertificateDownloadContext::
   page_number_++;
   QuerySharedCredentialsWithBindingIdsRequest request;
   request.set_name(absl::StrCat("devices/", device_id_));
+  if (join_time_.has_value()) {
+    absl::StatusOr<google::protobuf::Timestamp> join_time =
+        util_time::EncodeGoogleApiProto(*join_time_);
+    if (join_time.ok()) {
+      *request.mutable_join_binding_time() = *join_time;
+    }
+  }
   if (next_page_token_.has_value()) {
     request.set_page_token(*next_page_token_);
   }
@@ -408,7 +418,8 @@ void NearbyShareCertificateManagerImpl::CertificateDownloadContext::
                        << absl::BytesToHexString(credential.data());
             continue;
           }
-          VLOG(1) << "Successfully parsed credential: " << credential.id();
+          VLOG(1) << "Successfully parsed credential: " << credential.id()
+                  << " with binding id: " << certificate.binding_id();
           certificates_.push_back(certificate);
         }
 
@@ -466,10 +477,20 @@ bool NearbyShareCertificateManagerImpl::DownloadPublicCertificatesInExecutor() {
     return true;
   }
 
+  // Clear join_time if it is expired.
+  std::optional<absl::Time> join_time;
+  {
+    absl::MutexLock lock(join_time_mutex_);
+    if (join_time_.has_value() &&
+        context_->GetClock()->Now() > join_time_discard_time_) {
+      join_time_.reset();
+    }
+    join_time = join_time_;
+  }
   bool download_succeeded = false;
   absl::Notification notification;
   auto context = std::make_unique<CertificateDownloadContext>(
-      nearby_identity_client_, std::move(device_id),
+      nearby_identity_client_, std::move(device_id), join_time,
       [this, &download_succeeded, &notification](
           absl::StatusOr<std::vector<PublicCertificate>> certificates_status) {
         if (!certificates_status.ok()) {
@@ -489,7 +510,7 @@ bool NearbyShareCertificateManagerImpl::DownloadPublicCertificatesInExecutor() {
         notification.Notify();
       });
   if (NearbyFlags::GetInstance().GetBoolFlag(
-          config_package_nearby::nearby_sharing_feature::kEnableFileSync)) {
+          config_package_nearby::nearby_sharing_feature::kEnableBackup)) {
     context->QuerySharedCredentialsWithBindingIdsFetchNextPage();
   } else {
     context->QuerySharedCredentialsFetchNextPage();
@@ -744,6 +765,13 @@ void NearbyShareCertificateManagerImpl::SetVendorId(int32_t vendor_id) {
   RegeneratePrivateCertificates();
 }
 
+void NearbyShareCertificateManagerImpl::SetJoinBindingTime(
+    absl::Time join_binding_time, absl::Duration life_time) {
+  absl::MutexLock lock(join_time_mutex_);
+  join_time_ = join_binding_time;
+  join_time_discard_time_ = context_->GetClock()->Now() + life_time;
+}
+
 std::string NearbyShareCertificateManagerImpl::Dump() const {
   std::stringstream sstream;
   sstream << "Public Certificates" << std::endl;
@@ -892,6 +920,32 @@ bool NearbyShareCertificateManagerImpl::RefreshPrivateCertificatesInExecutor(
   return true;
 }
 
+void NearbyShareCertificateManagerImpl::AddBindingToPublicCertificate(
+    absl::string_view certificate_id, absl::string_view binding_id) {
+  LOG(INFO) << "Adding binding to public certificate: "
+            << absl::BytesToHexString(certificate_id);
+  absl::Notification notification;
+  certificate_storage_->GetPublicCertificate(
+      certificate_id,
+      [this, id = std::string(binding_id), &notification](
+          bool success, std::unique_ptr<PublicCertificate> certificate) {
+        if (success && certificate != nullptr) {
+          certificate->set_binding_id(id);
+          certificate_storage_->AddPublicCertificates(
+              {*certificate}, [](bool success) {
+                if (!success) {
+                  LOG(WARNING)
+                      << "Failed to add binding to public certificate.";
+                }
+              });
+        } else {
+          LOG(WARNING) << "Failed to add binding to public certificate.";
+        }
+        notification.Notify();
+      });
+  notification.WaitForNotification();
+}
+
 void NearbyShareCertificateManagerImpl::ForceUploadPrivateCertificates() {
   executor_->PostTask([this]() {
     private_certificate_expiration_scheduler_->HandleResult(
@@ -942,9 +996,9 @@ bool NearbyShareCertificateManagerImpl::UpdateAccountInfoInExecutor() {
           get_account_info_succeeded = true;
           const auto& capabilities = response->account_info().capabilities();
           bool has_titanium_capability =
-              (std::find(capabilities.begin(), capabilities.end(),
-                         google::nearby::identity::v1::AccountInfo::
-                             CAPABILITY_TITANIUM) != capabilities.end());
+              (absl::c_find(capabilities,
+                            google::nearby::identity::v1::AccountInfo::
+                                CAPABILITY_TITANIUM) != capabilities.end());
           preference_manager_.SetBoolean(PrefNames::kAdvancedProtectionEnabled,
                                          has_titanium_capability);
           LOG(INFO) << "GetAccountInfo succeeded, advanced protection enabled: "

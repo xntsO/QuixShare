@@ -14,11 +14,17 @@
 
 #include "internal/platform/service_address.h"
 
+#include <cstdint>
 #include <string>
 
+#include "absl/strings/string_view.h"
 #include "connections/implementation/proto/offline_wire_formats.pb.h"
 
 namespace nearby {
+namespace {
+constexpr absl::string_view kIpv6LoopbackAddress(
+    "\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\1", 16);
+}  // namespace
 
 void ServiceAddressToProto(
     const ServiceAddress& service_address,
@@ -31,15 +37,42 @@ void ServiceAddressToProto(
 bool ServiceAddressFromProto(
     const location::nearby::connections::ServiceAddress& proto,
     ServiceAddress& service_address) {
-  // Address must be either 4 or 16 bytes and port must be set.
+  // Address must be either 4 or 16 bytes and port must be valid (1 to 65535).
   if ((proto.ip_address().size() != 16 && proto.ip_address().size() != 4) ||
-      proto.port() == 0) {
+      proto.port() <= 0 || proto.port() > 65535) {
     return false;
   }
   service_address.address = {proto.ip_address().begin(),
                              proto.ip_address().end()};
   service_address.port = proto.port();
   return true;
+}
+
+bool ServiceAddress::IsLoopbackAddress() const {
+  if (address.size() == 4) {
+    // IPv4 loopback: 127.0.0.0/8
+    return address[0] == 127;
+  } else if (address.size() == 16) {
+    // IPv6 loopback: ::1
+    return absl::string_view(address.data(), address.size()) ==
+           kIpv6LoopbackAddress;
+  }
+  return false;
+}
+
+bool ServiceAddress::IsLinkLocalAddress() const {
+  if (address.size() == 4) {
+    // IPv4 link-local: 169.254.0.0/16
+    uint8_t b0 = static_cast<uint8_t>(address[0]);
+    uint8_t b1 = static_cast<uint8_t>(address[1]);
+    return b0 == 169 && b1 == 254;
+  } else if (address.size() == 16) {
+    // IPv6 link-local: fe80::/10
+    uint8_t b0 = static_cast<uint8_t>(address[0]);
+    uint8_t b1 = static_cast<uint8_t>(address[1]);
+    return b0 == 0xfe && (b1 & 0xc0) == 0x80;
+  }
+  return false;
 }
 
 }  // namespace nearby

@@ -26,6 +26,7 @@
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "internal/platform/clock.h"
 #include "internal/platform/task_runner.h"
 #include "sharing/analytics/analytics_recorder.h"
@@ -141,10 +142,8 @@ class OutgoingShareSession : public ShareSession {
 
   std::optional<TransferMetadata> ProcessPayloadTransferUpdates();
 
-  void SetAdvancedProtectionStatus(bool advanced_protection_enabled,
-                                   bool advanced_protection_mismatch) {
+  void SetAdvancedProtectionStatus(bool advanced_protection_enabled) {
     advanced_protection_enabled_ = advanced_protection_enabled;
-    advanced_protection_mismatch_ = advanced_protection_mismatch;
   }
 
   // Returns true if the session is connected or in the process of connecting.
@@ -166,13 +165,16 @@ class OutgoingShareSession : public ShareSession {
 
   // Initiates the peer binding message exchange with the remote device.
   // `binding_id` is the result of a successful call to InitiateBinding rpc.
+  // `cert_ids` are the public certificate ids that can be used to identify this
+  // device.
   // `callback` is called when either a BindingResponse frame is received or a
   // timeout occurs.
   void StartPeerBinding(
       std::string binding_id,
       nearby::sharing::service::proto::BindingRequest::Type binding_type,
+      absl::Span<const std::string> cert_ids,
       absl::AnyInvocable<
-          void(nearby::sharing::service::proto::BindingResponse::Status)>
+          void(const nearby::sharing::service::proto::BindingResponse&)>
           callback);
 
  protected:
@@ -210,7 +212,6 @@ class OutgoingShareSession : public ShareSession {
   // Timeout waiting for remote disconnect in order to complete transfer.
   std::unique_ptr<ThreadTimer> disconnection_timeout_;
   bool advanced_protection_enabled_ = false;
-  bool advanced_protection_mismatch_ = false;
   bool is_connecting_ = false;
   // Session can be for transfer or pairing.
   bool is_transfer_session_ = false;

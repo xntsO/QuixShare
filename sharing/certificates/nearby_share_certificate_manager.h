@@ -22,6 +22,8 @@
 #include <string>
 #include <vector>
 
+#include "absl/strings/string_view.h"
+#include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "internal/base/observer_list.h"
 #include "sharing/certificates/nearby_share_decrypted_public_certificate.h"
@@ -80,6 +82,12 @@ class NearbyShareCertificateManager {
   std::optional<NearbyShareEncryptedMetadataKey>
   EncryptPrivateCertificateMetadataKey(proto::DeviceVisibility visibility);
 
+  // Returns the id of the currently valid private certificate with
+  // |visibility|, or absl::nullopt if there is no valid private certificate
+  // with |visibility|.
+  std::optional<std::string> GetPrivateCertificateId(
+      proto::DeviceVisibility visibility);
+
   // Signs the input |payload| using the currently valid private certificate
   // with |visibility|. Returns absl::nullopt if there is no valid private
   // certificate with |visibility| or if the signing was unsuccessful.
@@ -119,8 +127,17 @@ class NearbyShareCertificateManager {
   // Sets the vendor ID to generate certificates for.
   virtual void SetVendorId(int32_t vendor_id) = 0;
 
+  // Sets the timestamp of the join binding rpc. This is used to ensure that the
+  // requested public certificates contain the ids of the binding.
+  // `life_time` determines how long this join_binding_time will be used.
+  virtual void SetJoinBindingTime(absl::Time join_binding_time,
+                                  absl::Duration life_time) = 0;
+
   // Dump certificates ID information for troubleshooting.
   virtual std::string Dump() const = 0;
+
+  virtual void AddBindingToPublicCertificate(
+      absl::string_view certificate_id, absl::string_view binding_id) = 0;
 
  protected:
   virtual void OnStartScheduledTasks() = 0;

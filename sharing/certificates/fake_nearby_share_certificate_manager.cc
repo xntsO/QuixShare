@@ -20,9 +20,11 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <string>
 #include <utility>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "internal/base/file_path.h"
 #include "sharing/certificates/nearby_share_certificate_manager.h"
 #include "sharing/certificates/nearby_share_encrypted_metadata_key.h"
@@ -100,6 +102,12 @@ void FakeNearbyShareCertificateManager::ClearPublicCertificates(
     std::function<void(bool)> callback) {
   ++num_clear_public_certificates_calls_;
   callback(true);
+}
+
+void FakeNearbyShareCertificateManager::AddBindingToPublicCertificate(
+    absl::string_view certificate_id, absl::string_view binding_id) {
+  add_binding_to_public_certificate_calls_.push_back(
+      {std::string(certificate_id), std::string(binding_id)});
 }
 
 std::optional<NearbySharePrivateCertificate>

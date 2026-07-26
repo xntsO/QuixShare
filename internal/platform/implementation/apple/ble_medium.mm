@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "absl/algorithm/container.h"
 #import "internal/platform/implementation/apple/ble_medium.h"
 
 #import <CoreBluetooth/CoreBluetooth.h>
 #import <Foundation/Foundation.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -157,8 +159,17 @@ void BleMedium::HandleAdvertisementFound(id<GNCPeripheral> peripheral,
     return;
   }
 
+  std::vector<Uuid> scanning_uuids;
+  {
+    absl::MutexLock lock(&scanning_mutex_);
+    scanning_uuids = scanning_service_uuids_;
+  }
   for (CBUUID *key in serviceData.allKeys) {
-    data.service_data[CPPUUIDFromObjC(key)] = ByteArrayFromNSData(serviceData[key]);
+    Uuid cpp_uuid = CPPUUIDFromObjC(key);
+    if (absl::c_find(scanning_uuids, cpp_uuid) == scanning_uuids.end()) {
+      continue;
+    }
+    data.service_data[cpp_uuid] = ByteArrayFromNSData(serviceData[key]);
   }
 
   // Add the peripheral to the map if we haven't discovered it yet.
@@ -197,6 +208,7 @@ std::unique_ptr<api::ble::BleMedium::ScanningSession> BleMedium::StartScanning(
   {
     absl::MutexLock lock(&scanning_mutex_);
     scanning_cb_ = std::make_shared<api::ble::BleMedium::ScanningCallback>(std::move(callback));
+    scanning_service_uuids_ = {service_uuid};
 
     if (central_manager_factory_) {
       socketCentralManager_ = central_manager_factory_(serviceUUID);
@@ -273,6 +285,7 @@ bool BleMedium::StartScanning(const Uuid &service_uuid, api::ble::TxPowerLevel t
   {
     absl::MutexLock lock(&scanning_mutex_);
     scan_cb_ = std::make_shared<api::ble::BleMedium::ScanCallback>(std::move(callback));
+    scanning_service_uuids_ = {service_uuid};
 
     if (central_manager_factory_) {
       socketCentralManager_ = central_manager_factory_(serviceUUID);
@@ -331,6 +344,7 @@ bool BleMedium::StartMultipleServicesScanning(const std::vector<Uuid> &service_u
   {
     absl::MutexLock lock(&scanning_mutex_);
     scan_cb_ = std::make_shared<api::ble::BleMedium::ScanCallback>(std::move(callback));
+    scanning_service_uuids_ = service_uuids;
 
     if (central_manager_factory_) {
       socketCentralManager_ = central_manager_factory_(serviceUUIDs[0]);
@@ -379,6 +393,7 @@ bool BleMedium::StopScanning() {
     [socketCentralManager_ stopNoScanMode];
     scan_cb_ = nullptr;
     scanning_cb_ = nullptr;
+    scanning_service_uuids_.clear();
   }
 
   dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
@@ -534,6 +549,13 @@ std::unique_ptr<api::ble::BleServerSocket> BleMedium::OpenServerSocketWithDeadlo
   server_socket->SetCloseNotifier([this]() {
     absl::MutexLock lock(server_socket_mutex_);
     server_socket_ptr_ = nullptr;
+    if (socketPeripheralManager_ != nil && socketPeripheralServiceManager_ != nil) {
+      [socketPeripheralManager_
+          removePeripheralServiceManagerForServiceUUID:socketPeripheralServiceManager_.serviceUUID
+                           bleServiceRemovedCompletion:^(NSError *_Nullable error) {
+                             GNCLoggerInfo(@"Weave service removed from peripheral manager.");
+                           }];
+    }
   });
 
   socketPeripheralServiceManager_ = [[GNSPeripheralServiceManager alloc]
@@ -549,15 +571,6 @@ std::unique_ptr<api::ble::BleServerSocket> BleMedium::OpenServerSocketWithDeadlo
                                         callbackQueue:connection_callback_queue_];
 
           auto socket_wrapper = std::make_unique<BleSocket>(connection);
-          socket_wrapper->SetCloseNotifier(
-              [socketPeripheralManager = socketPeripheralManager_,
-               serviceUUID = socketPeripheralServiceManager_.serviceUUID]() {
-                [socketPeripheralManager
-                    removePeripheralServiceManagerForServiceUUID:serviceUUID
-                                     bleServiceRemovedCompletion:^(NSError *_Nullable error) {
-                                       GNCLoggerInfo(@"BleSocket is removed peripheral manager.");
-                                     }];
-              });
 
           connection.connectionHandlers = socket_wrapper->GetInputStream().GetConnectionHandlers();
 
@@ -612,6 +625,16 @@ std::unique_ptr<api::ble::BleServerSocket> BleMedium::OpenServerSocketLegacy(
   // Raw pointer for closure capture in the legacy path (risks use-after-free).
   BleServerSocket *server_socket_ptr = server_socket.get();
 
+  server_socket->SetCloseNotifier([this]() {
+    if (socketPeripheralManager_ != nil && socketPeripheralServiceManager_ != nil) {
+      [socketPeripheralManager_
+          removePeripheralServiceManagerForServiceUUID:socketPeripheralServiceManager_.serviceUUID
+                           bleServiceRemovedCompletion:^(NSError *_Nullable error) {
+                             GNCLoggerInfo(@"Weave service removed from peripheral manager.");
+                           }];
+    }
+  });
+
   socketPeripheralServiceManager_ = [[GNSPeripheralServiceManager alloc]
          initWithBleServiceUUID:[CBUUID UUIDWithString:kWeaveServiceUUID]
        addPairingCharacteristic:NO
@@ -627,14 +650,6 @@ std::unique_ptr<api::ble::BleServerSocket> BleMedium::OpenServerSocketLegacy(
                                         callbackQueue:connection_callback_queue_];
 
           auto socket = std::make_unique<BleSocket>(connection);
-          socket->SetCloseNotifier([socketPeripheralManager = socketPeripheralManager_,
-                                    serviceUUID = socketPeripheralServiceManager_.serviceUUID]() {
-            [socketPeripheralManager
-                removePeripheralServiceManagerForServiceUUID:serviceUUID
-                                 bleServiceRemovedCompletion:^(NSError *_Nullable error) {
-                                   GNCLoggerInfo(@"BleSocket is removed peripheral manager.");
-                                 }];
-          });
 
           connection.connectionHandlers = socket->GetInputStream().GetConnectionHandlers();
           if (server_socket_ptr) {

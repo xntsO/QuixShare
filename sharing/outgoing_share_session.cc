@@ -23,9 +23,11 @@
 #include <utility>
 #include <vector>
 
+#include "location/nearby/cpp/sharing/clients/cpp/common/nearby_sharing_common.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
+#include "absl/types/span.h"
 #include "internal/base/file_path.h"
 #include "internal/base/files.h"
 #include "internal/platform/clock.h"
@@ -372,8 +374,7 @@ void OutgoingShareSession::SendPayloads(
   analytics_recorder().NewSendAttachmentsStart(
       session_id(), attachment_container(),
       /*transfer_position=*/1,
-      /*concurrent_connections=*/1, advanced_protection_enabled_,
-      advanced_protection_mismatch_);
+      /*concurrent_connections=*/1, advanced_protection_enabled_);
   VLOG(1) << "The connection was accepted. Payloads are now being sent.";
   InitializePayloadTracker(std::move(payload_transder_update_callback));
   SendNextPayload();
@@ -423,10 +424,11 @@ bool OutgoingShareSession::SendIntroduction(
   }
   WriteFrame(frame);
   // Log analytics event of sending introduction.
-  analytics_recorder().NewSendIntroduction(session_id(), share_target(),
-                                           /*transfer_position=*/1,
-                                           /*concurrent_connections=*/1,
-                                           os_type());
+  analytics_recorder().NewSendIntroduction(
+      session_id(), share_target(),
+      /*transfer_position=*/1,
+      /*concurrent_connections=*/1, os_type(),
+      nearby::sharing::cpp::common::GetPowerStatus());
   VLOG(1) << "Successfully wrote the introduction frame";
   ready_for_accept_ = true;
   mutual_acceptance_timeout_ = std::make_unique<ThreadTimer>(
@@ -646,7 +648,8 @@ OutgoingShareSession::ProcessPayloadTransferUpdates() {
 
 void OutgoingShareSession::StartPeerBinding(
     std::string binding_id, BindingRequest::Type binding_type,
-    absl::AnyInvocable<void(BindingResponse::Status)> callback) {
+    absl::Span<const std::string> cert_ids,
+    absl::AnyInvocable<void(const BindingResponse&)> callback) {
   Frame frame;
   frame.set_version(Frame::V1);
   V1Frame* v1_frame = frame.mutable_v1();
@@ -655,6 +658,7 @@ void OutgoingShareSession::StartPeerBinding(
       v1_frame->mutable_bindings()->mutable_binding_request();
   binding_request->set_binding_id(binding_id);
   binding_request->set_type(binding_type);
+  binding_request->mutable_cert_ids()->Add(cert_ids.begin(), cert_ids.end());
   WriteFrame(frame);
   LOG(INFO) << "Waiting for bindings response frame from " << share_target().id;
   UpdateTransferMetadata(
@@ -667,19 +671,19 @@ void OutgoingShareSession::StartPeerBinding(
       nearby::sharing::service::proto::V1Frame::BINDINGS,
       [callback = std::move(callback)](
           bool is_timeout, std::optional<V1Frame> frame) mutable {
+        BindingResponse failure_response;
+        failure_response.set_status(BindingResponse::FAILURE);
         if (!frame.has_value()) {
-          std::move(callback)(BindingResponse::FAILURE);
+          std::move(callback)(failure_response);
           return;
         }
         if (!frame->has_bindings() ||
-            !frame->bindings().has_binding_response() ||
-            frame->bindings().binding_response().status() !=
-                BindingResponse::SUCCESS) {
-          std::move(callback)(BindingResponse::FAILURE);
+            !frame->bindings().has_binding_response()) {
+          std::move(callback)(failure_response);
           return;
         }
         // Peer binding flow completed successfully.
-        std::move(callback)(BindingResponse::SUCCESS);
+        std::move(callback)(frame->bindings().binding_response());
       },
       kReadResponseFrameTimeout);
 }

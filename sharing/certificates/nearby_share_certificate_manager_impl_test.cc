@@ -39,6 +39,7 @@
 #include "absl/strings/string_view.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
+#include "third_party/gloop/util/time/protoutil.h"
 #include "internal/flags/nearby_flags.h"
 #include "internal/platform/mac_address.h"
 #include "sharing/certificates/constants.h"
@@ -78,6 +79,7 @@ using ::google::nearby::identity::v1::
     QuerySharedCredentialsWithBindingIdsResponse;
 using ::nearby::sharing::proto::DeviceVisibility;
 using ::nearby::sharing::proto::PublicCertificate;
+using ::protobuf_matchers::EqualsProto;
 using ::testing::Not;
 using ::testing::ReturnRef;
 using ::testing::UnorderedElementsAreArray;
@@ -634,6 +636,31 @@ TEST_F(NearbyShareCertificateManagerImplTest,
       DeviceVisibility::DEVICE_VISIBILITY_ALL_CONTACTS));
 }
 
+TEST_F(NearbyShareCertificateManagerImplTest,
+       GetPrivateCertificateIdWithNoCertificates) {
+  Initialize();
+  cert_store_->ReplacePrivateCertificates({});
+  EXPECT_FALSE(cert_manager_->GetPrivateCertificateId(
+      DeviceVisibility::DEVICE_VISIBILITY_ALL_CONTACTS).has_value());
+}
+
+TEST_F(NearbyShareCertificateManagerImplTest,
+       GetPrivateCertificateIdWithValidCertificate) {
+  Initialize();
+  NearbySharePrivateCertificate private_certificate =
+      GetNearbyShareTestPrivateCertificate(
+          DeviceVisibility::DEVICE_VISIBILITY_ALL_CONTACTS);
+  cert_store_->ReplacePrivateCertificates({private_certificate});
+  FastForward(GetNearbyShareTestNotBefore() +
+              kNearbyShareCertificateValidityPeriod * 0.5 - Now());
+  ASSERT_TRUE(cert_manager_->GetPrivateCertificateId(
+      DeviceVisibility::DEVICE_VISIBILITY_ALL_CONTACTS).has_value());
+  EXPECT_EQ(cert_manager_->GetPrivateCertificateId(
+      DeviceVisibility::DEVICE_VISIBILITY_ALL_CONTACTS).value(),
+      std::string(private_certificate.id().begin(),
+                  private_certificate.id().end()));
+}
+
 TEST_F(NearbyShareCertificateManagerImplTest, SignWithPrivateCertificate) {
   Initialize();
   NearbySharePrivateCertificate private_certificate =
@@ -782,7 +809,7 @@ TEST_F(NearbyShareCertificateManagerImplTest,
 TEST_F(NearbyShareCertificateManagerImplTest,
        QuerySharedCredentialsWithBindingIdsSuccess) {
   NearbyFlags::GetInstance().OverrideBoolFlagValue(
-      config_package_nearby::nearby_sharing_feature::kEnableFileSync, true);
+      config_package_nearby::nearby_sharing_feature::kEnableBackup, true);
   Initialize();
   ASSERT_NO_FATAL_FAILURE(QuerySharedCredentialsWithBindingIdsFlow(
       /*num_pages=*/2, DownloadPublicCertificatesResult::kSuccess));
@@ -791,10 +818,46 @@ TEST_F(NearbyShareCertificateManagerImplTest,
 TEST_F(NearbyShareCertificateManagerImplTest,
        QuerySharedCredentialsWithBindingIdsRPCFailure) {
   NearbyFlags::GetInstance().OverrideBoolFlagValue(
-      config_package_nearby::nearby_sharing_feature::kEnableFileSync, true);
+      config_package_nearby::nearby_sharing_feature::kEnableBackup, true);
   Initialize();
   ASSERT_NO_FATAL_FAILURE(QuerySharedCredentialsWithBindingIdsFlow(
       /*num_pages=*/2, DownloadPublicCertificatesResult::kHttpError));
+}
+
+TEST_F(NearbyShareCertificateManagerImplTest,
+       QuerySharedCredentialsWithBindingIdsWithJoinTime) {
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_sharing_feature::kEnableBackup, true);
+  Initialize();
+  cert_manager_->SetJoinBindingTime(absl::FromUnixSeconds(123456789),
+                                    absl::Seconds(30));
+  ASSERT_NO_FATAL_FAILURE(QuerySharedCredentialsWithBindingIdsFlow(
+      /*num_pages=*/2, DownloadPublicCertificatesResult::kSuccess));
+  std::vector<QuerySharedCredentialsWithBindingIdsRequest> requests =
+      identity_client_.query_shared_credentials_with_binding_ids_requests();
+  for (const auto& request : requests) {
+    ASSERT_OK_AND_ASSIGN(
+        auto expected_time,
+        util_time::EncodeGoogleApiProto(absl::FromUnixSeconds(123456789)));
+    EXPECT_THAT(request.join_binding_time(), EqualsProto(expected_time));
+  }
+}
+
+TEST_F(NearbyShareCertificateManagerImplTest,
+       QuerySharedCredentialsWithBindingIdsWithJoinTimeExpiration) {
+  NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      config_package_nearby::nearby_sharing_feature::kEnableBackup, true);
+  Initialize();
+  cert_manager_->SetJoinBindingTime(absl::FromUnixSeconds(123456789),
+                                    absl::Seconds(30));
+  FastForward(absl::Seconds(31));
+  ASSERT_NO_FATAL_FAILURE(QuerySharedCredentialsWithBindingIdsFlow(
+      /*num_pages=*/2, DownloadPublicCertificatesResult::kSuccess));
+  std::vector<QuerySharedCredentialsWithBindingIdsRequest> requests =
+      identity_client_.query_shared_credentials_with_binding_ids_requests();
+  for (const auto& request : requests) {
+    EXPECT_FALSE(request.has_join_binding_time());
+  }
 }
 
 TEST_F(NearbyShareCertificateManagerImplTest, ClearPublicCertificates) {
@@ -1108,6 +1171,26 @@ TEST_F(NearbyShareCertificateManagerImplTest,
   EXPECT_FALSE(identity_client_.get_account_info_requests().empty());
   EXPECT_TRUE(preference_manager_.GetBoolean(
       PrefNames::kAdvancedProtectionEnabled, /*default_value=*/false));
+}
+
+TEST_F(NearbyShareCertificateManagerImplTest, AddBindingToPublicCertificate) {
+  Initialize();
+
+  PublicCertificate cert;
+  cert.set_secret_id("test_cert_id");
+  cert.set_binding_id("old_binding_id");
+
+  cert_store_->SetPublicCertificates({cert});
+  cert_store_->SetAddPublicCertificatesResult(true);
+
+  cert_manager_->AddBindingToPublicCertificate("test_cert_id",
+                                               "new_binding_id");
+
+  ASSERT_EQ(cert_store_->add_public_certificates_calls().size(), 1u);
+  const auto& call = cert_store_->add_public_certificates_calls().back();
+  ASSERT_EQ(call.public_certificates.size(), 1u);
+  EXPECT_EQ(call.public_certificates[0].secret_id(), "test_cert_id");
+  EXPECT_EQ(call.public_certificates[0].binding_id(), "new_binding_id");
 }
 
 }  // namespace nearby::sharing

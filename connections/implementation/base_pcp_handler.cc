@@ -25,6 +25,7 @@
 
 #include "securegcm/ukey2_handshake.h"
 #include "absl/base/thread_annotations.h"
+#include "absl/cleanup/cleanup.h"
 #include "absl/container/btree_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/escaping.h"
@@ -94,7 +95,6 @@ using ::location::nearby::connections::ConnectionResponseFrame;
 using ::location::nearby::connections::ConnectionsDevice;
 using ::location::nearby::connections::MediumMetadata;
 using ::location::nearby::connections::OfflineFrame;
-using ::location::nearby::connections::OsInfo;
 using ::location::nearby::connections::PresenceDevice;
 using ::location::nearby::connections::V1Frame;
 using ::location::nearby::proto::connections::OperationResultCode;
@@ -576,15 +576,16 @@ Status BasePcpHandler::WaitForResult(const std::string& method_name,
   return result.result();
 }
 
-void BasePcpHandler::RunOnPcpHandlerThread(const std::string& name,
+bool BasePcpHandler::RunOnPcpHandlerThread(const std::string& name,
                                            Runnable runnable) {
   if (closed_.Get()) {
     LOG(WARNING) << "Skip to run PCP Handler task " << name
                  << " due to PCP Handler is closed";
-    return;
+    return false;
   }
 
   serial_executor_.Execute(name, std::move(runnable));
+  return true;
 }
 
 EncryptionRunner::ResultListener BasePcpHandler::GetResultListener(
@@ -894,13 +895,19 @@ ConnectionInfo BasePcpHandler::FillConnectionInfo(
     connection_info.ap_frequency = wifi_info.ap_frequency;
     if (NearbyFlags::GetInstance().GetBoolFlag(
             config_package_nearby::nearby_connections_feature::
-                kEnableDynamicRoleSwitch) &&
-        client->GetLocalOsInfo().type() == OsInfo::APPLE) {
-      ::location::nearby::connections::MediumRole medium_role_info;
-      medium_role_info.set_support_awdl_publisher(true);
-      medium_role_info.set_support_awdl_subscriber(true);
-      medium_role_info.set_support_wifi_hotspot_client(true);
-      connection_info.medium_role.emplace(medium_role_info);
+                kEnableDynamicRoleSwitch)) {
+      LOG(INFO) << "kEnableDynamicRoleSwitch is enabled";
+      ClientProxy::MediumsAvailability mediums_availability;
+      mediums_availability.is_wifi_direct_go_available =
+          mediums_->GetWifiDirect().IsGOAvailable();
+      mediums_availability.is_wifi_direct_gc_available =
+          mediums_->GetWifiDirect().IsGCAvailable();
+      mediums_availability.is_wifi_hotspot_ap_available =
+          mediums_->GetWifiHotspot().IsAPAvailable();
+      mediums_availability.is_wifi_hotspot_client_available =
+          mediums_->GetWifiHotspot().IsClientAvailable();
+      connection_info.medium_role.emplace(
+          client->GetLocalMediumRole(mediums_availability));
     }
     LOG(INFO) << "Query for WIFI information: is_supports_5_ghz="
               << connection_info.supports_5_ghz
@@ -1585,7 +1592,8 @@ Status BasePcpHandler::AcceptConnection(ClientProxy* client,
 
         Exception write_exception =
             channel->Write(parser::ForConnectionResponse(
-                Status::kSuccess, client->GetLocalOsInfo()));
+                Status::kSuccess, client->GetLocalOsInfo(),
+                client->GetLocalDeviceName()));
         if (!write_exception.Ok()) {
           LOG(INFO) << "AcceptConnection: failed to send response: endpoint_id="
                     << endpoint_id;
@@ -1646,7 +1654,8 @@ Status BasePcpHandler::RejectConnection(ClientProxy* client,
 
         Exception write_exception =
             channel->Write(parser::ForConnectionResponse(
-                Status::kConnectionRejected, client->GetLocalOsInfo()));
+                Status::kConnectionRejected, client->GetLocalOsInfo(),
+                client->GetLocalDeviceName()));
         if (!write_exception.Ok()) {
           LOG(INFO) << "RejectConnection: failed to send response: endpoint_id="
                     << endpoint_id;
@@ -1673,9 +1682,10 @@ void BasePcpHandler::OnIncomingFrame(
     OfflineFrame& frame, const std::string& endpoint_id, ClientProxy* client,
     location::nearby::proto::connections::Medium medium) {
   CountDownLatch latch(1);
-  RunOnPcpHandlerThread(
+  bool scheduled = RunOnPcpHandlerThread(
       "incoming-frame",
       [this, client, endpoint_id, frame, &latch]() RUN_ON_PCP_HANDLER_THREAD() {
+        absl::Cleanup release_caller = [&latch] { latch.CountDown(); };
         LOG(INFO) << "OnConnectionResponse: endpoint_id=" << endpoint_id;
 
         if (client->HasRemoteEndpointResponded(endpoint_id)) {
@@ -1729,9 +1739,14 @@ void BasePcpHandler::OnIncomingFrame(
         EvaluateConnectionResult(client, endpoint_id,
                                  /* can_close_immediately= */ true);
 
-        latch.CountDown();
+        if (connection_response.has_wifi_direct_device_name()) {
+          client->SetRemoteDeviceName(
+              endpoint_id, connection_response.wifi_direct_device_name());
+        }
       });
-  WaitForLatch("OnIncomingFrame()", &latch);
+  if (scheduled) {
+    WaitForLatch("OnIncomingFrame()", &latch);
+  }
 }
 
 void BasePcpHandler::OnEndpointDisconnect(ClientProxy* client,

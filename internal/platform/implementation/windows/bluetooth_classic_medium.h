@@ -21,7 +21,6 @@
 #include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
-#include "internal/base/observer_list.h"
 #include "internal/platform/cancellation_flag.h"
 #include "internal/platform/implementation/bluetooth_adapter.h"
 #include "internal/platform/implementation/bluetooth_classic.h"
@@ -34,8 +33,7 @@
 #include "internal/platform/implementation/windows/generated/winrt/base.h"
 #include "internal/platform/mac_address.h"
 
-namespace nearby {
-namespace windows {
+namespace nearby::windows {
 
 // Container of operations that can be performed over the Bluetooth Classic
 // medium.
@@ -80,7 +78,7 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   // UUID.
   //
   //  Returns nullptr error.
-  std::unique_ptr<api::BluetoothServerSocket> ListenForService(
+  std::shared_ptr<api::BluetoothServerSocket> ListenForService(
       const std::string& service_name,
       const std::string& service_uuid) override;
 
@@ -91,19 +89,11 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   std::unique_ptr<api::BluetoothPairing> CreatePairing(
       api::BluetoothDevice& remote_device) override;
 
-  void AddObserver(Observer* observer) override {
-    observers_.AddObserver(observer);
-  }
-
-  // Removes an observer. It's OK to remove an unregistered observer.
-  void RemoveObserver(Observer* observer) override {
-    observers_.RemoveObserver(observer);
-  }
-
  private:
   bool StartScanning();
   bool StopScanning();
-  bool StartAdvertising(bool radio_discoverable);
+  std::shared_ptr<BluetoothServerSocket> StartAdvertising(
+      bool radio_discoverable);
   bool StopAdvertising();
   bool InitializeServiceSdpAttributes(
       ::winrt::Windows::Devices::Bluetooth::Rfcomm::RfcommServiceProvider
@@ -185,13 +175,14 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   // Used for advertising.
   ::winrt::Windows::Devices::Bluetooth::Rfcomm::RfcommServiceProvider
       rfcomm_provider_ = nullptr;
-  std::unique_ptr<BluetoothServerSocket> server_socket_ = nullptr;
+  std::shared_ptr<api::BluetoothServerSocket> server_socket_;
+  // Raw pointer to the BluetoothServerSocket impl class that is held by the
+  // shared_ptr server_socket_.  The lifetime of this pointer is guaranteed by
+  // the shared_ptr.
   BluetoothServerSocket* raw_server_socket_ = nullptr;
   bool is_radio_discoverable_ = false;
-  ObserverList<Observer> observers_;
 };
 
-}  // namespace windows
-}  // namespace nearby
+}  // namespace nearby::windows
 
 #endif  // PLATFORM_IMPL_WINDOWS_BLUETOOTH_CLASSIC_MEDIUM_H_

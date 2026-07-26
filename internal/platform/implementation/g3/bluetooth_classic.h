@@ -195,7 +195,7 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   // UUID.
   //
   //  Returns nullptr on error.
-  std::unique_ptr<api::BluetoothServerSocket> ListenForService(
+  std::shared_ptr<api::BluetoothServerSocket> ListenForService(
       const std::string& service_name, const std::string& service_uuid) override
       ABSL_LOCKS_EXCLUDED(mutex_);
 
@@ -205,9 +205,6 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
       api::BluetoothDevice& remote_device) override;
 
   api::BluetoothDevice* GetRemoteDevice(MacAddress mac_address) override;
-
-  void AddObserver(Observer* observer) override;
-  void RemoveObserver(Observer* observer) override;
 
  private:
   absl::Mutex mutex_;

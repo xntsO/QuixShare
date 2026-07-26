@@ -31,11 +31,13 @@
 #include "location/nearby/sharing/lib/rpc/sharing_rpc_client.h"
 #include "location/nearby/sharing/lib/sync/sync_manager.h"
 #include "absl/base/nullability.h"
+#include "absl/base/thread_annotations.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/container/flat_hash_set.h"
 #include "absl/functional/any_invocable.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
+#include "absl/synchronization/mutex.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
 #include "internal/platform/clock.h"
@@ -219,6 +221,9 @@ class NearbySharingServiceImpl
   // Handle the state changes of screen lock.
   void OnLockStateChanged(bool locked);
 
+  void OnSuspendResumeEvent(
+      nearby::api::DeviceInfo::SuspendResumeEvent event);
+
   // Handle the state changes of bluetooth adapter.
   void AdapterPresentChanged(sharing::api::BluetoothAdapter* adapter,
                              bool present) override;
@@ -281,7 +286,6 @@ class NearbySharingServiceImpl
   void InvalidateSendSurfaceState();
   void InvalidateScanningState();
   void InvalidateFastInitiationAdvertising();
-  void InvalidateReceiveSurfaceState();
   void InvalidateAdvertisingState();
   void StopAdvertising();
   void StartScanning();
@@ -406,13 +410,14 @@ class NearbySharingServiceImpl
   bool OutgoingSessionAccept(OutgoingShareSession& session);
   void OnIncomingFilesMetadataUpdated(int64_t share_target_id,
                                       TransferMetadata metadata, bool success);
+  std::vector<std::string> GetCertIdsForSyncBinding();
   // Called when InitiateBinding rpc returns.
   void OnInitiateSyncBindingResponse(
       int64_t share_target_id, absl::StatusOr<std::string> binding_status);
   // Called when Bindings response frame is received from the peer.
   void OnPeerSyncBindingComplete(
       int64_t share_target_id, absl::string_view binding_id,
-      service::proto::BindingResponse::Status status);
+      const service::proto::BindingResponse& binding_response);
 
   // Notify all registered send surfaces of share target state changes.
   void NotifyShareTargetDiscovered(const ShareTarget& share_target);
@@ -546,6 +551,16 @@ class NearbySharingServiceImpl
   bool force_new_endpoint_id_ = false;
   OutgoingTargetsManager outgoing_targets_manager_;
   nearby::sharing::SyncManager sync_manager_;
+
+  // Visibility used for the last advertisement.
+  proto::DeviceVisibility last_advertised_device_visibility_ =
+      proto::DeviceVisibility::DEVICE_VISIBILITY_UNSPECIFIED;
+  bool advertising_on_screen_locked_ = false;
+  int64_t suspend_resume_listener_id_ = 0;
+  absl::Mutex suspend_mutex_;
+  bool suspended_ ABSL_GUARDED_BY(suspend_mutex_) = false;
+  std::unique_ptr<ThreadTimer> resume_delay_timer_
+      ABSL_GUARDED_BY(suspend_mutex_);
 };
 
 }  // namespace nearby::sharing

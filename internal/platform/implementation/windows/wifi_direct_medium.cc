@@ -251,8 +251,10 @@ std::unique_ptr<api::WifiDirectServerSocket> WifiDirectMedium::ListenForService(
 
 bool WifiDirectMedium::StartWifiDirect(
     WifiDirectCredentials* wifi_direct_credentials) {
+  remote_device_name_ = wifi_direct_credentials->GetRemoteDeviceName();
+  LOG(INFO) << __func__ << ": remote_device_name from credentials: "
+            << remote_device_name_;
   absl::MutexLock lock(mutex_);
-  LOG(INFO) << __func__ << ": Start to create WiFiDirect.";
   if (IsBeaconing()) {
     LOG(WARNING) << "Cannot create WiFiDirect GO again when it is running.";
     return true;
@@ -431,13 +433,19 @@ fire_and_forget WifiDirectMedium::OnConnectionRequested(
   LOG(INFO) << "Receive connection request from: "
             << winrt::to_string(device_name)
             << "; device ID: " << winrt::to_string(device_id);
+  if (!remote_device_name_.empty() &&
+      !absl::EqualsIgnoreCase(remote_device_name_,
+                              winrt::to_string(device_name))) {
+    LOG(INFO) << "Ignore the connection request from the unrelated device.";
+    return winrt::fire_and_forget();
+  }
 
   DeviceInformation windows_device_info(connection_request.DeviceInformation());
   auto deviceInfoP =
       std::make_unique<WifiDirectDeviceDiscovered>(windows_device_info);
 
   {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     connection_requested_devices_by_id_[device_id] = std::move(deviceInfoP);
   }
 
@@ -500,7 +508,7 @@ fire_and_forget WifiDirectMedium::OnConnectionRequested(
       std::string remote_ip =
           winrt::to_string(pair.RemoteHostName().DisplayName());
 
-      absl::MutexLock lock(&mutex_);
+      absl::MutexLock lock(mutex_);
       wifi_direct_device_ = device;
       ip_address_local_ = local_ip;
       ip_address_remote_ = remote_ip;
@@ -749,7 +757,7 @@ fire_and_forget WifiDirectMedium::Watcher_DeviceAdded(
             << ";   device name: " << winrt::to_string(device_info.Name());
   winrt::hstring device_id = device_info.Id();
   {
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     if (discovered_devices_by_id_.contains(device_id)) {
       return winrt::fire_and_forget();
     }
@@ -800,7 +808,7 @@ fire_and_forget WifiDirectMedium::Watcher_DeviceAdded(
   // Create a WiFiDirectDevice out of this id
   if (!is_paired) {
     LOG(INFO) << "GC paired failed!";
-    absl::MutexLock lock(&mutex_);
+    absl::MutexLock lock(mutex_);
     if (connection_latch_) {
       connection_latch_->CountDown();
     }

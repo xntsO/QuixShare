@@ -240,10 +240,10 @@ std::unique_ptr<api::BluetoothSocket> BluetoothClassicMedium::ConnectToService(
   return socket;
 }
 
-std::unique_ptr<api::BluetoothServerSocket>
+std::shared_ptr<api::BluetoothServerSocket>
 BluetoothClassicMedium::ListenForService(const std::string& service_name,
                                          const std::string& service_uuid) {
-  auto socket = std::make_unique<BluetoothServerSocket>(GetAdapter());
+  auto socket = std::make_shared<BluetoothServerSocket>(GetAdapter());
   socket->SetCloseNotifier([this, uuid = service_uuid]() {
     absl::MutexLock lock(mutex_);
     sockets_.erase(uuid);
@@ -262,16 +262,6 @@ std::unique_ptr<api::BluetoothPairing> BluetoothClassicMedium::CreatePairing(
 api::BluetoothDevice* BluetoothClassicMedium::GetRemoteDevice(
     MacAddress mac_address) {
   return MediumEnvironment::Instance().FindBluetoothDevice(mac_address);
-}
-
-void BluetoothClassicMedium::AddObserver(
-    api::BluetoothClassicMedium::Observer* observer) {
-  MediumEnvironment::Instance().AddObserver(observer);
-}
-
-void BluetoothClassicMedium::RemoveObserver(
-    api::BluetoothClassicMedium::Observer* observer) {
-  MediumEnvironment::Instance().RemoveObserver(observer);
 }
 
 }  // namespace g3

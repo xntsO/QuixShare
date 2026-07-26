@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "absl/time/time.h"
 #include "internal/base/file_path.h"
 #include "sharing/certificates/nearby_share_certificate_manager.h"
 #include "sharing/certificates/nearby_share_certificate_manager_impl.h"
@@ -89,6 +90,11 @@ class FakeNearbyShareCertificateManager : public NearbyShareCertificateManager {
     CertDecryptedCallback callback;
   };
 
+  struct AddBindingToPublicCertificateCall {
+    std::string certificate_id;
+    std::string binding_id;
+  };
+
   FakeNearbyShareCertificateManager();
   ~FakeNearbyShareCertificateManager() override;
 
@@ -100,6 +106,13 @@ class FakeNearbyShareCertificateManager : public NearbyShareCertificateManager {
   void ForceUploadPrivateCertificates() override {};
   void ClearPublicCertificates(std::function<void(bool)> callback) override;
   void SetVendorId(int32_t vendor_id) override {}
+  void AddBindingToPublicCertificate(
+      absl::string_view certificate_id, absl::string_view binding_id) override;
+  void SetJoinBindingTime(absl::Time join_binding_time,
+                          absl::Duration life_time) override {
+    join_binding_time_ = join_binding_time;
+    join_binding_life_time_ = life_time;
+  }
   std::string Dump() const override { return ""; }
 
   // Make protected methods from base class public in this fake class.
@@ -125,6 +138,11 @@ class FakeNearbyShareCertificateManager : public NearbyShareCertificateManager {
     return get_decrypted_public_certificate_calls_;
   }
 
+  const std::vector<AddBindingToPublicCertificateCall>&
+  add_binding_to_public_certificate_calls() const {
+    return add_binding_to_public_certificate_calls_;
+  }
+
  private:
   // NearbyShareCertificateManager:
   void OnStartScheduledTasks() override {}
@@ -139,7 +157,11 @@ class FakeNearbyShareCertificateManager : public NearbyShareCertificateManager {
   size_t num_clear_public_certificates_calls_ = 0;
   std::vector<GetDecryptedPublicCertificateCall>
       get_decrypted_public_certificate_calls_;
+  std::vector<AddBindingToPublicCertificateCall>
+      add_binding_to_public_certificate_calls_;
   std::vector<uint8_t> next_salt_;
+  absl::Time join_binding_time_;
+  absl::Duration join_binding_life_time_;
 };
 
 }  // namespace sharing
