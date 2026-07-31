@@ -72,7 +72,6 @@ jobs:
             libbluetooth-dev \
             libxkbcommon-dev \
             libxcb-cursor0 \
-            dbus-daemon \
             patchelf \
             qt6-base-dev \
             qt6-declarative-dev \
@@ -97,9 +96,7 @@ jobs:
             //sharing/linux/app:appimage
 
       - name: Package and validate minimal AppImage
-        env:
-          RUN_BACKEND_SMOKE_TEST: 1
-        run: dbus-run-session -- ./sharing/linux/app/packaging/package_minimal_appimage.sh
+        run: ./sharing/linux/app/packaging/package_minimal_appimage.sh
 
       - name: Generate SHA256 checksum
         working-directory: sharing/linux/dist-minimal
@@ -113,7 +110,7 @@ jobs:
           test -x sharing/linux/dist-minimal/QuickShare-x86_64.AppImage
           test -x sharing/linux/dist-minimal/QuickShare.AppDir/AppRun
           test -e sharing/linux/dist-minimal/QuickShare.AppDir/usr/lib/libQt6DBus.so.6
-          test -s sharing/linux/dist-minimal/backend-smoke-test.log
+          test -s sharing/linux/dist-minimal/qml-smoke-test.log
           file sharing/linux/dist-minimal/QuickShare-x86_64.AppImage
 
       - name: Publish GitHub Release
