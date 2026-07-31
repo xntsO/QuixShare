@@ -29,7 +29,6 @@
 #include "absl/functional/any_invocable.h"
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
-#include "internal/base/observer_list.h"
 // #include "internal/platform/implementation/ble.h"
 #include "internal/platform/implementation/bluetooth_classic.h"
 #include "internal/platform/implementation/linux/bluez_device.h"
@@ -150,8 +149,7 @@ class MonitoredBluetoothDevice final
   MonitoredBluetoothDevice &operator=(MonitoredBluetoothDevice &&) = delete;
   MonitoredBluetoothDevice(
       std::shared_ptr<sdbus::IConnection> system_bus,
-      std::shared_ptr<bluez::Device> device,
-      ObserverList<api::BluetoothClassicMedium::Observer> &observers);
+      std::shared_ptr<bluez::Device> device);
   ~MonitoredBluetoothDevice() override { unregisterProxy(); }
 
   void SetDiscoveryCallback(
@@ -178,7 +176,6 @@ class MonitoredBluetoothDevice final
     return callback;
   }
 
-  ObserverList<api::BluetoothClassicMedium::Observer> &observers_;
   absl::Mutex discovery_cb_mutex_;
   std::weak_ptr<api::BluetoothClassicMedium::DiscoveryCallback> discovery_cb_
       ABSL_GUARDED_BY(discovery_cb_mutex_);

@@ -35,7 +35,6 @@
 #include "ble_l2cap_server_socket.h"
 #include "ble_l2cap_socket.h"
 #include "ble_gatt_server.h"
-#include "internal/base/observer_list.h"
 #include "internal/platform/implementation/linux/bluetooth_classic_device.h"
 #include "internal/platform/implementation/linux/bluetooth_devices.h"
 #include "internal/platform/implementation/linux/bluez.h"
@@ -72,10 +71,8 @@ BleV2Medium::~BleV2Medium() {
 BleV2Medium::BleV2Medium(BluetoothAdapter& adapter)
     : system_bus_(adapter.GetConnection()),
       adapter_(adapter),
-      observers_(std::make_shared<
-                 ObserverList<api::BluetoothClassicMedium::Observer>>()),
       devices_(std::make_unique<BluetoothDevices>(
-          system_bus_, adapter_.GetObjectPath(), *observers_)),
+          system_bus_, adapter_.GetObjectPath())),
       gatt_discovery_(std::make_shared<BluezGattDiscovery>(system_bus_)),
       root_object_manager_(std::make_unique<RootObjectManager>(
           *system_bus_,

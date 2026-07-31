@@ -27,7 +27,6 @@
 #include <sdbus-c++/Types.h>
 
 #include "internal/platform/implementation/linux/bluez_agent.h"
-#include "internal/base/observer_list.h"
 #include "internal/platform/implementation/bluetooth_classic.h"
 #include "internal/platform/implementation/linux/bluetooth_adapter.h"
 #include "internal/platform/implementation/linux/bluetooth_bluez_profile.h"
@@ -78,7 +77,7 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   // UUID.
   //
   //  Returns nullptr error.
-  std::unique_ptr<api::BluetoothServerSocket> ListenForService(
+  std::shared_ptr<api::BluetoothServerSocket> ListenForService(
       const std::string &service_name,
       const std::string &service_uuid) override;
 
@@ -92,18 +91,10 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
 
   api::BluetoothDevice *GetRemoteDevice(MacAddress mac_address) override;
 
-  void AddObserver(Observer *observer) override {
-    observers_->AddObserver(observer);
-  };
-  void RemoveObserver(Observer *observer) override {
-    observers_->RemoveObserver(observer);
-  };
-
  private:
   std::shared_ptr<sdbus::IConnection> system_bus_;
 
   BluetoothAdapter adapter_;
-  std::shared_ptr<ObserverList<Observer>> observers_;
   std::shared_ptr<BluetoothDevices> devices_;
   std::unique_ptr<DeviceWatcher> device_watcher_;
 

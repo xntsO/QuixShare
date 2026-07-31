@@ -148,14 +148,12 @@ bool BluetoothDevice::ConnectToProfile(absl::string_view service_uuid) {
 }
   MonitoredBluetoothDevice::MonitoredBluetoothDevice(
     std::shared_ptr<sdbus::IConnection> system_bus,
-    std::shared_ptr<bluez::Device> device,
-    ObserverList<api::BluetoothClassicMedium::Observer> &observers)
+    std::shared_ptr<bluez::Device> device)
     : BluetoothDevice(device),
       ProxyInterfaces<sdbus::Properties_proxy>(*system_bus,
                                                sdbus::ServiceName(bluez::SERVICE_DEST),
                                                device->getProxy().getObjectPath()),
-      system_bus_(std::move(system_bus)),
-      observers_(observers) {
+      system_bus_(std::move(system_bus)) {
   registerProxy();
 }
 
@@ -170,30 +168,9 @@ void MonitoredBluetoothDevice::onPropertiesChanged(
   for (auto it = changedProperties.begin(); it != changedProperties.end();
        it++)
   {
-    if (it->first == bluez::DEVICE_PROP_ADDRESS) {
-      LOG(INFO) << __func__ << ": " << getProxy().getObjectPath()
-                           << ": Notifying observers about address change";
-      std::string address = it->second.get<std::string>();
-      for (const auto &observer : observers_.GetObservers()) {
-        observer->DeviceAddressChanged(*this, address);
-      }
-
-    } else if (it->first == bluez::DEVICE_PROP_PAIRED) {
-      LOG(INFO) << __func__ << ": " << getProxy().getObjectPath()
-                           << "Notifying observers about paired status change.";
-      for (const auto &observer : observers_.GetObservers()) {
-        observer->DevicePairedChanged(*this, it->second.get<bool>());
-      }
-    } else if (it->first == bluez::DEVICE_PROP_CONNECTED) {
-      LOG(INFO)
-          << __func__ << ": " << getProxy().getObjectPath()
-          << "Notifying observers about connected status change";
-      for (const auto &observer : observers_.GetObservers()) {
-        observer->DeviceConnectedStateChanged(*this, it->second.get<bool>());
-      }
-    } else if ( it -> first == "ServicesResolved"){
+    if (it->first == "ServicesResolved"){
       LOG(INFO) << ": ServicesResolved :" << it->second.get<std::string>();
-  }else if (it->first == bluez::DEVICE_NAME) {
+    } else if (it->first == bluez::DEVICE_NAME) {
       auto callback = GetDiscoveryCallback();
       if (callback != nullptr && callback->device_name_changed_cb != nullptr)
         callback->device_name_changed_cb(*this);

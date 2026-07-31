@@ -145,9 +145,6 @@ class BleV2Medium final : public api::ble::BleMedium {
 
   std::shared_ptr<sdbus::IConnection> system_bus_;
   BluetoothAdapter adapter_;
-  // Why do we have observers her
-  std::shared_ptr<ObserverList<api::BluetoothClassicMedium::Observer>>
-      observers_;
   std::shared_ptr<BluetoothDevices> devices_;
   std::shared_ptr<BluezGattDiscovery> gatt_discovery_;
 

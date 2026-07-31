@@ -19,7 +19,6 @@
 #include <sdbus-c++/Types.h>
 
 #include "absl/strings/string_view.h"
-#include "internal/base/observer_list.h"
 #include "internal/platform/implementation/bluetooth_classic.h"
 #include "internal/platform/implementation/linux/bluetooth_adapter.h"
 #include "internal/platform/implementation/linux/bluez_agent.h"
@@ -43,15 +42,11 @@ constexpr char kBluezAgentPath[] = "/com/google/nearby/bluetooth/agent";
 BluetoothClassicMedium::BluetoothClassicMedium(BluetoothAdapter &adapter)
     : system_bus_(adapter.GetConnection()),
       adapter_(adapter),
-      observers_(nullptr),
       devices_(nullptr),
       device_watcher_(nullptr),
       agent_manager_(std::make_unique<AgentManager>(*system_bus_)),
       profile_manager_(nullptr) {
-  auto shared =
-      GetSharedBluetoothDevices(system_bus_, adapter_.GetObjectPath());
-  observers_ = shared->observers;
-  devices_ = shared->devices;
+  devices_ = GetSharedBluetoothDevices(system_bus_, adapter_.GetObjectPath());
   profile_manager_ =
       std::make_unique<ProfileManager>(*system_bus_, *devices_);
 
@@ -68,8 +63,7 @@ bool BluetoothClassicMedium::StartDiscovery(
     DiscoveryCallback discovery_callback) {
   device_watcher_ = std::make_unique<DeviceWatcher>(
       *system_bus_, adapter_.GetObjectPath(), adapter_, devices_,
-      std::make_unique<DiscoveryCallback>(std::move(discovery_callback)),
-      observers_);
+      std::make_unique<DiscoveryCallback>(std::move(discovery_callback)));
 
   std::map<std::string, sdbus::Variant> filter;
   filter["Transport"] = sdbus::Variant("auto");
@@ -159,7 +153,7 @@ std::unique_ptr<api::BluetoothSocket> BluetoothClassicMedium::ConnectToService(
       new BluetoothSocket(device, fd.value()));
 }
 
-std::unique_ptr<api::BluetoothServerSocket>
+std::shared_ptr<api::BluetoothServerSocket>
 BluetoothClassicMedium::ListenForService(const std::string &service_name,
                                          const std::string &service_uuid) {
   if (!profile_manager_->ProfileRegistered(service_uuid)) {
@@ -171,7 +165,7 @@ BluetoothClassicMedium::ListenForService(const std::string &service_name,
     }
   }
 
-  return std::unique_ptr<api::BluetoothServerSocket>(
+  return std::shared_ptr<api::BluetoothServerSocket>(
       new BluetoothServerSocket(*profile_manager_, service_uuid));
 }
 

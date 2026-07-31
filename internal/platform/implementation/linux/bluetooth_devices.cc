@@ -35,10 +35,10 @@ namespace nearby {
 namespace linux {
 static constexpr std::chrono::minutes kLostPeripheralsCleanupMinFreq(5);
 absl::Mutex g_shared_devices_lock;
-absl::flat_hash_map<std::string, std::weak_ptr<SharedBluetoothDevices>>
+absl::flat_hash_map<std::string, std::weak_ptr<BluetoothDevices>>
     g_shared_devices ABSL_GUARDED_BY(g_shared_devices_lock);
 
-std::shared_ptr<SharedBluetoothDevices> GetSharedBluetoothDevices(
+std::shared_ptr<BluetoothDevices> GetSharedBluetoothDevices(
     std::shared_ptr<sdbus::IConnection> system_bus,
     const sdbus::ObjectPath& adapter_object_path) {
   const std::string key = adapter_object_path;
@@ -49,13 +49,10 @@ std::shared_ptr<SharedBluetoothDevices> GetSharedBluetoothDevices(
       return existing;
     }
   }
-  auto shared = std::make_shared<SharedBluetoothDevices>();
-  shared->observers =
-      std::make_shared<ObserverList<api::BluetoothClassicMedium::Observer>>();
-  shared->devices = std::make_shared<BluetoothDevices>(
-      std::move(system_bus), adapter_object_path, *shared->observers);
-  g_shared_devices[key] = shared;
-  return shared;
+  auto devices = std::make_shared<BluetoothDevices>(
+      std::move(system_bus), adapter_object_path);
+  g_shared_devices[key] = devices;
+  return devices;
 }
 
 std::shared_ptr<BluetoothDevice> BluetoothDevices::get_device_by_path(
@@ -136,8 +133,7 @@ std::shared_ptr<MonitoredBluetoothDevice> BluetoothDevices::add_new_device(
       std::string(device_object_path),
       std::make_shared<MonitoredBluetoothDevice>(
           system_bus_,
-          std::make_shared<bluez::Device>(system_bus_, device_object_path),
-          observers_));
+          std::make_shared<bluez::Device>(system_bus_, device_object_path)));
   if (!inserted) device_it->second->UnmarkLost();
   return device_it->second;
 }
@@ -163,11 +159,6 @@ void DeviceWatcher::onInterfacesAdded(
     discovery_cb_->device_discovered_cb(*device);
   }
 
-  if (observers_ != nullptr) {
-    for (const auto &observer : observers_->GetObservers()) {
-      observer->DeviceAdded(*device);
-    }
-  }
 }
 
 void DeviceWatcher::onInterfacesRemoved(
@@ -196,10 +187,7 @@ void DeviceWatcher::onInterfacesRemoved(
       discovery_cb_->device_lost_cb(*device);
     }
 
-    if (observers_ != nullptr) {
-      for (const auto &observer : observers_->GetObservers()) {
-        observer->DeviceRemoved(*device);
-      }
+    if (discovery_cb_ != nullptr) {
       devices_->remove_device_by_path(objectPath);
     } else {
       devices_->mark_peripheral_lost(objectPath);

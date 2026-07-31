@@ -28,8 +28,8 @@
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
-#include "internal/base/observer_list.h"
 #include "internal/platform/bluetooth_utils.h"
+#include "internal/platform/implementation/ble.h"
 #include "internal/platform/implementation/bluetooth_classic.h"
 #include "internal/platform/implementation/linux/bluetooth_classic_device.h"
 
@@ -41,10 +41,8 @@ class BluetoothDevices final {
  public:
   BluetoothDevices(
       std::shared_ptr<sdbus::IConnection> system_bus,
-      sdbus::ObjectPath adapter_object_path,
-      ObserverList<api::BluetoothClassicMedium::Observer> &observers)
+      sdbus::ObjectPath adapter_object_path)
       : system_bus_(std::move(system_bus)),
-        observers_(observers),
         adapter_object_path_(std::move(adapter_object_path)) {}
 
   std::shared_ptr<BluetoothDevice> get_device_by_path(const sdbus::ObjectPath &)
@@ -74,7 +72,6 @@ class BluetoothDevices final {
 
  private:
   std::shared_ptr<sdbus::IConnection> system_bus_;
-  ObserverList<api::BluetoothClassicMedium::Observer> &observers_;
   sdbus::ObjectPath adapter_object_path_;
 
   absl::Mutex devices_by_path_lock_;
@@ -84,12 +81,7 @@ class BluetoothDevices final {
       ABSL_GUARDED_BY(devices_by_path_lock_);
 };
 
-struct SharedBluetoothDevices {
-  std::shared_ptr<BluetoothDevices> devices;
-  std::shared_ptr<ObserverList<api::BluetoothClassicMedium::Observer>> observers;
-};
-
-std::shared_ptr<SharedBluetoothDevices> GetSharedBluetoothDevices(
+std::shared_ptr<BluetoothDevices> GetSharedBluetoothDevices(
     std::shared_ptr<sdbus::IConnection> system_bus,
     const sdbus::ObjectPath& adapter_object_path);
 
@@ -106,16 +98,13 @@ class DeviceWatcher final : sdbus::ProxyInterfaces<sdbus::ObjectManager_proxy> {
       BluetoothAdapter &adapter,
       std::shared_ptr<BluetoothDevices> devices,
       std::unique_ptr<api::BluetoothClassicMedium::DiscoveryCallback>
-          discovery_callback,
-      std::shared_ptr<ObserverList<api::BluetoothClassicMedium::Observer>>
-          observers)
+          discovery_callback)
       : ProxyInterfaces(system_bus, sdbus::ServiceName("org.bluez"),
                         sdbus::ObjectPath("/")),
         adapter_object_path_(adapter_object_path),
         adapter_(adapter),
         devices_(std::move(devices)),
-        discovery_cb_(std::move(discovery_callback)),
-        observers_(std::move(observers)) {
+        discovery_cb_(std::move(discovery_callback)) {
     notifyExistingDevices();
     registerProxy();
   }
@@ -124,7 +113,7 @@ class DeviceWatcher final : sdbus::ProxyInterfaces<sdbus::ObjectManager_proxy> {
                 BluetoothAdapter &adapter,
                 std::shared_ptr<BluetoothDevices> devices)
       : DeviceWatcher(system_bus, adapter_object_path, adapter, std::move(devices),
-                      nullptr, nullptr) {}
+                      nullptr) {}
   ~DeviceWatcher() { unregisterProxy(); }
 
   void onInterfacesAdded(
@@ -143,8 +132,6 @@ class DeviceWatcher final : sdbus::ProxyInterfaces<sdbus::ObjectManager_proxy> {
   BluetoothAdapter &adapter_;
   std::shared_ptr<BluetoothDevices> devices_;
   std::shared_ptr<api::BluetoothClassicMedium::DiscoveryCallback> discovery_cb_;
-  std::shared_ptr<ObserverList<api::BluetoothClassicMedium::Observer>>
-      observers_;
 };
 
 }  // namespace linux
