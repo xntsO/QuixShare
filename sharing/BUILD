@@ -366,6 +366,9 @@ cc_library(
     ],
     copts = [
         "-DNEARBY_SHARING_DLL",
+        "-DGLOOP_I_ACKNOWLEDGE_THAT_GLOOP_DOES_NOT_SUPPORT_LIBSTDCXX=1",
+        "-fno-exceptions",
+        "-funsigned-char",
     ],
     visibility = [
         "//location/nearby/cpp/sharing:__subpackages__",
@@ -428,7 +431,7 @@ cc_library(
         "//sharing/proto:share_cc_proto",
         "//sharing/proto:wire_format_cc_proto",
         "//sharing/scheduling",
-        "//third_party/gloop/util/time:protoutil",
+        "@gloop//gloop/util/time:protoutil",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/base:nullability",
         "@com_google_absl//absl/container:flat_hash_map",

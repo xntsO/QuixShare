@@ -40,6 +40,11 @@ cc_library(
         "nearby_share_encrypted_metadata_key.h",
         "nearby_share_private_certificate.h",
     ],
+    copts = [
+        "-DGLOOP_I_ACKNOWLEDGE_THAT_GLOOP_DOES_NOT_SUPPORT_LIBSTDCXX=1",
+        "-fno-exceptions",
+        "-funsigned-char",
+    ],
     visibility = ["//visibility:public"],
     deps = [
         "//google/nearby/identity/v1:resources_cc_proto",
@@ -63,7 +68,7 @@ cc_library(
         "//sharing/proto:enums_cc_proto",
         "//sharing/proto:share_cc_proto",
         "//sharing/scheduling",
-        "//third_party/gloop/util/time:protoutil",
+        "@gloop//gloop/util/time:protoutil",
         "//util/hash:highway_fingerprint",
         "@com_google_absl//absl/algorithm",
         "@com_google_absl//absl/algorithm:container",
@@ -126,6 +131,11 @@ cc_test(
         "nearby_share_decrypted_public_certificate_test.cc",
         "nearby_share_private_certificate_test.cc",
     ],
+    copts = [
+        "-DGLOOP_I_ACKNOWLEDGE_THAT_GLOOP_DOES_NOT_SUPPORT_LIBSTDCXX=1",
+        "-fno-exceptions",
+        "-funsigned-char",
+    ],
     deps = [
         ":certificates",
         ":test_support",
@@ -148,7 +158,7 @@ cc_test(
         "//sharing/proto:share_cc_proto",
         "//sharing/scheduling",
         "//sharing/scheduling:test_support",
-        "//third_party/gloop/util/time:protoutil",
+        "@gloop//gloop/util/time:protoutil",
         "@com_github_protobuf_matchers//protobuf-matchers",
         "@com_google_absl//absl/functional:any_invocable",
         "@com_google_absl//absl/status",

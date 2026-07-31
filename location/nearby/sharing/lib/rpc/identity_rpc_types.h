@@ -141,7 +141,21 @@ class QuerySharedCredentialsResponse {
 };
 
 class QuerySharedCredentialsWithBindingIdsRequest
-    : public QuerySharedCredentialsRequest {};
+    : public QuerySharedCredentialsRequest {
+ public:
+  bool has_join_binding_time() const { return has_join_binding_time_; }
+  google::protobuf::Timestamp* mutable_join_binding_time() {
+    has_join_binding_time_ = true;
+    return &join_binding_time_;
+  }
+  const google::protobuf::Timestamp& join_binding_time() const {
+    return join_binding_time_;
+  }
+
+ private:
+  bool has_join_binding_time_ = false;
+  google::protobuf::Timestamp join_binding_time_;
+};
 
 class QuerySharedCredentialsWithBindingIdsResponse
     : public QuerySharedCredentialsResponse {};
@@ -205,4 +219,3 @@ class GetAccountInfoResponse {
 }  // namespace google::nearby::identity::v1
 
 #endif  // LOCATION_NEARBY_SHARING_LIB_RPC_IDENTITY_RPC_TYPES_H_
-

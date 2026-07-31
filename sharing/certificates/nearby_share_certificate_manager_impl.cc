@@ -46,7 +46,7 @@
 #include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "absl/types/span.h"
-#include "third_party/gloop/util/time/protoutil.h"
+#include "gloop/util/time/protoutil.h"
 #include "internal/base/file_path.h"
 #include "internal/flags/nearby_flags.h"
 #include "internal/platform/mac_address.h"

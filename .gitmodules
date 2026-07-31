@@ -10,3 +10,6 @@
 [submodule "third_party/json/json"]
 	path = third_party/json/json
 	url = https://github.com/nlohmann/json
+[submodule "third_party/gloop"]
+	path = third_party/gloop
+	url = https://github.com/abseil/gloop.git

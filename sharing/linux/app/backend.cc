@@ -53,6 +53,18 @@ void ConfigureFlags() {
       nearby::connections::config_package_nearby::nearby_connections_feature::
           kRefactorBleL2cap,
       true);
+  nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      nearby::connections::config_package_nearby::nearby_connections_feature::
+          kEnableDynamicRoleSwitch,
+      true);
+  nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      nearby::connections::config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirect,
+      true);
+  nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      nearby::connections::config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirectGcOnly,
+      true);
 }
 
 std::unique_ptr<nearby::sharing::AttachmentContainer> CreateFileAttachments(

@@ -69,8 +69,7 @@ std::string GetHostname() {
 
 void PrintUsage(const char* argv0) {
   std::cerr << "Usage:\n"
-            << "  " << argv0
-            << " receive [--name NAME] [--timeout SECONDS]\n"
+            << "  " << argv0 << " receive [--name NAME] [--timeout SECONDS]\n"
             << "  " << argv0
             << " send FILE [--name NAME] [--timeout SECONDS]\n";
 }
@@ -156,7 +155,6 @@ NearbySharingService::StatusCodes WaitForStatus(Invoker invoker) {
   return *status;
 }
 
-
 struct CliState {
   std::mutex mutex;
   std::condition_variable cv;
@@ -171,9 +169,9 @@ struct CliState {
 void PrintTransferUpdate(const ShareTarget& share_target,
                          const AttachmentContainer& attachment_container,
                          const TransferMetadata& metadata) {
-  std::cout << "transfer target=\"" << share_target.device_name << "\" id="
-            << share_target.id << " status="
-            << TransferMetadata::StatusToString(metadata.status())
+  std::cout << "transfer target=\"" << share_target.device_name
+            << "\" id=" << share_target.id
+            << " status=" << TransferMetadata::StatusToString(metadata.status())
             << " progress=" << metadata.progress()
             << "% bytes=" << metadata.transferred_bytes() << "/"
             << attachment_container.GetTotalAttachmentsSize() << std::endl;
@@ -263,8 +261,8 @@ class CliApp {
       Shutdown();
       return 1;
     }
-    int result = options_.mode == Options::Mode::kReceive ? RunReceive()
-                                                          : RunSend();
+    int result =
+        options_.mode == Options::Mode::kReceive ? RunReceive() : RunSend();
     Shutdown();
     return result;
   }
@@ -274,10 +272,9 @@ class CliApp {
     std::cout << "device name: " << options_.device_name << std::endl;
     service_->GetSettings()->SetDataUsage(proto::WIFI_ONLY_DATA_USAGE);
     service_->GetSettings()->SetDeviceName(
-        options_.device_name,
-        [](DeviceNameValidationResult validation_result) {
+        options_.device_name, [](DeviceNameValidationResult validation_result) {
           static_cast<void>(validation_result);
-    });
+        });
     auto status = WaitForStatus([&](auto callback) {
       service_->SetVisibility(proto::DEVICE_VISIBILITY_EVERYONE,
                               absl::ZeroDuration(), std::move(callback));
@@ -292,8 +289,8 @@ class CliApp {
 
     auto status = WaitForStatus([&](auto callback) {
       service_->RegisterReceiveSurface(
-          &transfer_callback, NearbySharingService::ReceiveSurfaceState::
-                                  kForeground,
+          &transfer_callback,
+          NearbySharingService::ReceiveSurfaceState::kForeground,
           Advertisement::BlockedVendorId::kNone, std::move(callback));
     });
     std::cout << "RegisterReceiveSurface: " << StatusCodeToString(status)
@@ -446,6 +443,14 @@ int main(int argc, char** argv) {
   nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
       nearby::connections::config_package_nearby::nearby_connections_feature::
           kRefactorBleL2cap,
+      true);
+  nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      nearby::connections::config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirect,
+      true);
+  nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      nearby::connections::config_package_nearby::nearby_connections_feature::
+          kEnableWifiDirectGcOnly,
       true);
 
   std::optional<nearby::sharing::linux::Options> options =
