@@ -8,7 +8,9 @@
 #include <vector>
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QTimer>
 
@@ -129,6 +131,11 @@ class Backend : public QObject,
 
  signals:
   void incomingTransfer(qint64 share_target_id);
+  void incomingOffer(qint64 share_target_id, QString device_name,
+                     int attachment_count, qint64 total_bytes);
+  void incomingOfferResolved(qint64 share_target_id);
+  void transferFinished(qint64 share_target_id, bool receive_mode,
+                        QString device_name, QString status);
   void outgoingTransferStartFailed(qint64 share_target_id);
 
  private:
@@ -185,6 +192,9 @@ class Backend : public QObject,
       nearby::api::FastInitiationManager::Error error);
   void OpenReceiveWindow(bool fallback);
   void OnReceiveTimeout();
+  void StartIncomingOfferTimer(qint64 share_target_id);
+  void ResolveIncomingOffer(qint64 share_target_id);
+  void OnIncomingOfferTimeout(qint64 share_target_id);
   std::function<void(NearbySharingService::StatusCodes)> StatusCallback(
       QString operation);
   void ReportStatus(const QString& operation,
@@ -199,6 +209,8 @@ class Backend : public QObject,
   TransferCallback send_transfer_callback_;
   TransferCallback receive_transfer_callback_;
   QTimer receive_timeout_timer_;
+  QHash<qint64, QTimer*> incoming_offer_timers_;
+  QSet<qint64> finished_transfer_ids_;
   Mode active_mode_ = Mode::kNone;
   Mode desired_mode_ = Mode::kNone;
   bool initialized_ = false;

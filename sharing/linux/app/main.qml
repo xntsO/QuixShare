@@ -9,6 +9,12 @@ Window {
     title: qsTr("QuickShare")
     color: "#DCF5FF"
 
+    onClosing: function(close) {
+        if (appController.closeToTray) {
+            close.accepted = false
+            root.hide()
+        }
+    }
 
     FontLoader {
         id: googlesans

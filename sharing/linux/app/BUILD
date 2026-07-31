@@ -1,6 +1,6 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_qt//:qt.bzl", "qt_cc_binary", "qt_cc_library", "qt_resource_via_qrc")
+load("@rules_qt//:qt.bzl", "qt_cc_binary", "qt_cc_library", "qt_cc_test", "qt_resource_via_qrc")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 load("@hedron_compile_commands//:refresh_compile_commands.bzl", "refresh_compile_commands")
@@ -69,6 +69,45 @@ qt_cc_library(
     ],
 )
 
+qt_cc_library(
+    name = "application_controller",
+    srcs = ["application_controller.cc"],
+    hdrs = ["application_controller.h"],
+    deps = [
+        ":backend",
+        "@rules_qt//:qt_core",
+        "@rules_qt//:qt_dbus",
+        "@rules_qt//:qt_gui",
+        "@rules_qt//:qt_hdrs",
+        "@rules_qt//:qt_quick",
+        "@rules_qt//:qt_widgets",
+    ],
+)
+
+qt_cc_test(
+    name = "application_controller_test",
+    size = "small",
+    srcs = ["application_controller_test.cc"],
+    env = {"QT_QPA_PLATFORM": "offscreen"},
+    deps = [
+        ":application_controller",
+        "@com_google_googletest//:gtest_main",
+        "@rules_qt//:qt_core",
+        "@rules_qt//:qt_gui",
+        "@rules_qt//:qt_hdrs",
+        "@rules_qt//:qt_labs_platform",
+        "@rules_qt//:qt_opengl",
+        "@rules_qt//:qt_qml",
+        "@rules_qt//:qt_qml_meta",
+        "@rules_qt//:qt_qml_workerscript",
+        "@rules_qt//:qt_quick",
+        "@rules_qt//:qt_quick_controls2",
+        "@rules_qt//:qt_quick_layouts",
+        "@rules_qt//:qt_quick_shapes",
+        "@rules_qt//:qt_widgets",
+    ],
+)
+
 cc_test(
     name = "backend_test",
     size = "small",
@@ -134,6 +173,7 @@ qt_cc_binary(
         "QT_QPA_PLATFORM": "wayland;xcb",
     },
     deps = [
+        ":application_controller",
         ":app_resources",
         ":backend",
         ":native_file_logging",

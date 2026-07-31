@@ -16,6 +16,7 @@
 #include <QTimer>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include "application_controller.h"
 #include "backend.h"
 #include "qobject.h"
 #include "sharing/linux/app/native_file_logging.h"
@@ -92,8 +93,8 @@ void InstallTerminationCleanup(QApplication& app) {
   fcntl(g_signal_pipe[1], F_SETFL,
         fcntl(g_signal_pipe[1], F_GETFL, 0) | O_NONBLOCK);
 
-  auto* notifier = new QSocketNotifier(g_signal_pipe[0],
-                                       QSocketNotifier::Read, &app);
+  auto* notifier =
+      new QSocketNotifier(g_signal_pipe[0], QSocketNotifier::Read, &app);
   QObject::connect(notifier, &QSocketNotifier::activated, &app,
                    [&app, notifier](int socket) {
                      notifier->setEnabled(false);
@@ -103,7 +104,7 @@ void InstallTerminationCleanup(QApplication& app) {
                      app.quit();
                    });
 
-  struct sigaction action {};
+  struct sigaction action{};
   action.sa_handler = HandleTerminationSignal;
   sigemptyset(&action.sa_mask);
   action.sa_flags = 0;
@@ -118,12 +119,32 @@ int main(int argc, char* argv[]) {
       nearby::sharing::linux::NativeFileLogging::Initialize();
   QApplication app(argc, argv);
   app.setApplicationName(QStringLiteral("QuickShare"));
+  app.setOrganizationDomain(QStringLiteral("com.google"));
   app.setDesktopFileName(QStringLiteral("quickshare"));
   app.setWindowIcon(QIcon(QStringLiteral(":/icons/quickshare.svg")));
+  app.setQuitOnLastWindowClosed(false);
+
+  ApplicationController application_controller(app);
+  if (!application_controller.ClaimSingleInstance()) {
+    return 0;
+  }
 
   Backend backend;
+  application_controller.SetBackend(&backend);
+  application_controller.InitializeTray();
   QQmlApplicationEngine engine;
   InstallTerminationCleanup(app);
+
+  engine.rootContext()->setContextProperty("backend", &backend);
+  engine.rootContext()->setContextProperty("appController",
+                                           &application_controller);
+  QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
+                   &application_controller,
+                   [&application_controller](QObject* object, const QUrl&) {
+                     if (object != nullptr) {
+                       application_controller.AttachWindow(object);
+                     }
+                   });
 
   const int fontId = QFontDatabase::addApplicationFont(":/googlesans_var.ttf");
 
@@ -137,8 +158,6 @@ int main(int argc, char* argv[]) {
   }
 
   if (IsHotReloadEnabled()) {
-    engine.rootContext()->setContextProperty("backend", &backend);
-
     const QDir qml_source_dir = QmlSourceDir();
     const QUrl source_url =
         QUrl::fromLocalFile(qml_source_dir.absoluteFilePath("main.qml"));
@@ -191,7 +210,6 @@ int main(int argc, char* argv[]) {
     return result;
   }
 
-  engine.rootContext()->setContextProperty("backend", &backend);
   // Loaded via the qrc scheme since it's compiled into the binary
   const QUrl url(QStringLiteral("qrc:/main.qml"));
 

@@ -39,8 +39,17 @@ class BackendTestPeer {
     return backend.monitoring_requested_;
   }
 
+  static bool HasIncomingOfferTimer(const Backend& backend,
+                                    int64_t share_target_id) {
+    return backend.incoming_offer_timers_.contains(share_target_id);
+  }
+
   static void ExpireReceiveWindow(Backend& backend) {
     backend.OnReceiveTimeout();
+  }
+
+  static void ExpireIncomingOffer(Backend& backend, int64_t share_target_id) {
+    backend.OnIncomingOfferTimeout(share_target_id);
   }
 };
 
@@ -97,10 +106,16 @@ class TestSharingService final : public nearby::sharing::NearbySharingService {
                        std::function<void(StatusCodes)> callback) override {
     callback(StatusCodes::kOk);
   }
-  void Accept(int64_t, std::function<void(StatusCodes)> callback) override {
+  void Accept(int64_t share_target_id,
+              std::function<void(StatusCodes)> callback) override {
+    ++accept_count_;
+    last_accepted_target_ = share_target_id;
     callback(StatusCodes::kOk);
   }
-  void Reject(int64_t, std::function<void(StatusCodes)> callback) override {
+  void Reject(int64_t share_target_id,
+              std::function<void(StatusCodes)> callback) override {
+    ++reject_count_;
+    last_rejected_target_ = share_target_id;
     callback(StatusCodes::kOk);
   }
   void Cancel(int64_t, std::function<void(StatusCodes)> callback) override {
@@ -148,9 +163,18 @@ class TestSharingService final : public nearby::sharing::NearbySharingService {
     receive_callback_->OnTransferUpdate(target, attachments, metadata);
   }
 
+  int accept_count() const { return accept_count_; }
+  int reject_count() const { return reject_count_; }
+  int64_t last_accepted_target() const { return last_accepted_target_; }
+  int64_t last_rejected_target() const { return last_rejected_target_; }
+
  private:
   bool send_registered_ = false;
   nearby::sharing::TransferUpdateCallback* receive_callback_ = nullptr;
+  int accept_count_ = 0;
+  int reject_count_ = 0;
+  int64_t last_accepted_target_ = 0;
+  int64_t last_rejected_target_ = 0;
 };
 
 class TestFastInitiationManager final
@@ -286,6 +310,73 @@ TEST_F(BackendFastInitiationTest, IncomingOfferCancelsReceiveTimeout) {
 
   EXPECT_TRUE(BackendTestPeer::IsReceiving(*backend_));
   EXPECT_FALSE(BackendTestPeer::IsReceiveTimerActive(*backend_));
+  EXPECT_TRUE(BackendTestPeer::HasIncomingOfferTimer(*backend_, target.id));
+}
+
+TEST_F(BackendFastInitiationTest, AcceptCancelsIncomingOfferTimeout) {
+  fast_init_manager_.FireDiscovered();
+  DrainEvents();
+
+  nearby::sharing::ShareTarget target;
+  target.id = 11;
+  auto attachments = nearby::sharing::AttachmentContainer::Builder().Build();
+  service_.FireReceiveTransferUpdate(
+      target, *attachments,
+      nearby::sharing::TransferMetadataBuilder()
+          .set_status(nearby::sharing::TransferMetadata::Status::
+                          kAwaitingLocalConfirmation)
+          .build());
+  DrainEvents();
+
+  backend_->accept(target.id);
+
+  EXPECT_FALSE(BackendTestPeer::HasIncomingOfferTimer(*backend_, target.id));
+  EXPECT_EQ(service_.accept_count(), 1);
+  EXPECT_EQ(service_.last_accepted_target(), target.id);
+  BackendTestPeer::ExpireIncomingOffer(*backend_, target.id);
+  EXPECT_EQ(service_.reject_count(), 0);
+}
+
+TEST_F(BackendFastInitiationTest, IncomingOfferTimeoutRejectsExactlyOnce) {
+  fast_init_manager_.FireDiscovered();
+  DrainEvents();
+
+  nearby::sharing::ShareTarget target;
+  target.id = 12;
+  auto attachments = nearby::sharing::AttachmentContainer::Builder().Build();
+  service_.FireReceiveTransferUpdate(
+      target, *attachments,
+      nearby::sharing::TransferMetadataBuilder()
+          .set_status(nearby::sharing::TransferMetadata::Status::
+                          kAwaitingLocalConfirmation)
+          .build());
+  DrainEvents();
+
+  BackendTestPeer::ExpireIncomingOffer(*backend_, target.id);
+  BackendTestPeer::ExpireIncomingOffer(*backend_, target.id);
+
+  EXPECT_FALSE(BackendTestPeer::HasIncomingOfferTimer(*backend_, target.id));
+  EXPECT_EQ(service_.reject_count(), 1);
+  EXPECT_EQ(service_.last_rejected_target(), target.id);
+}
+
+TEST_F(BackendFastInitiationTest, FinalReceiveRestartsMonitoring) {
+  fast_init_manager_.FireDiscovered();
+  DrainEvents();
+
+  nearby::sharing::ShareTarget target;
+  target.id = 13;
+  auto attachments = nearby::sharing::AttachmentContainer::Builder().Build();
+  service_.FireReceiveTransferUpdate(
+      target, *attachments,
+      nearby::sharing::TransferMetadataBuilder()
+          .set_status(nearby::sharing::TransferMetadata::Status::kComplete)
+          .build());
+  DrainEvents();
+
+  EXPECT_TRUE(BackendTestPeer::IsIdle(*backend_));
+  EXPECT_TRUE(BackendTestPeer::IsMonitoringRequested(*backend_));
+  EXPECT_TRUE(fast_init_manager_.IsScanning());
 }
 
 TEST_F(BackendFastInitiationTest, DiscoveryStopsFastInitiationScanning) {

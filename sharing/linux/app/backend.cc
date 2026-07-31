@@ -31,6 +31,7 @@ using NearbySharingService = nearby::sharing::NearbySharingService;
 
 constexpr std::chrono::seconds kShutdownTimeout(10);
 constexpr int kReceiveTimeoutMilliseconds = 30 * 1000;
+constexpr int kIncomingOfferTimeoutMilliseconds = 45 * 1000;
 
 QString ToQString(const std::string& value) {
   return QString::fromStdString(value);
@@ -491,6 +492,7 @@ bool Backend::sendFile(qint64 share_target_id, const QString& path) {
 
 void Backend::accept(qint64 share_target_id) {
   if (service_ != nullptr && !shutting_down_) {
+    ResolveIncomingOffer(share_target_id);
     service_->Accept(share_target_id,
                      StatusCallback(QStringLiteral("Accept transfer")));
   }
@@ -498,6 +500,7 @@ void Backend::accept(qint64 share_target_id) {
 
 void Backend::reject(qint64 share_target_id) {
   if (service_ != nullptr && !shutting_down_) {
+    ResolveIncomingOffer(share_target_id);
     service_->Reject(share_target_id,
                      StatusCallback(QStringLiteral("Reject transfer")));
   }
@@ -517,6 +520,11 @@ void Backend::shutdown() {
   shutting_down_ = true;
   monitoring_requested_ = false;
   receive_timeout_timer_.stop();
+  const QList<QTimer*> offer_timers = incoming_offer_timers_.values();
+  incoming_offer_timers_.clear();
+  for (QTimer* timer : offer_timers) {
+    timer->stop();
+  }
   auto& fast_init_manager = *fast_init_manager_;
   if (fast_init_manager.IsScanning()) {
     fast_init_manager.StopScanning(nullptr);
@@ -559,22 +567,78 @@ void Backend::OnTransferUpdate(
     const nearby::sharing::AttachmentContainer& attachments,
     const TransferMetadata& transfer) {
   const int64_t total_bytes = attachments.GetTotalAttachmentsSize();
+  const int attachment_count = attachments.GetAttachmentCount();
   QPointer<Backend> backend(this);
-  PostStatus(this, [backend, receive_mode, target, transfer, total_bytes]() {
+  PostStatus(this, [backend, receive_mode, target, transfer, total_bytes,
+                    attachment_count]() {
     if (!backend || backend->shutting_down_) {
       return;
     }
     backend->targets_.ApplyTarget(target);
     backend->transfers_.ApplyTransfer(receive_mode, target, transfer,
                                       total_bytes);
+    if (!transfer.is_final_status()) {
+      backend->finished_transfer_ids_.remove(target.id);
+    }
     if (receive_mode &&
         transfer.status() ==
             TransferMetadata::Status::kAwaitingLocalConfirmation) {
       backend->receive_offer_received_ = true;
       backend->receive_timeout_timer_.stop();
+      backend->StartIncomingOfferTimer(target.id);
       emit backend->incomingTransfer(target.id);
+      emit backend->incomingOffer(target.id, ToQString(target.device_name),
+                                  attachment_count, total_bytes);
+      return;
+    }
+
+    if (receive_mode) {
+      backend->ResolveIncomingOffer(target.id);
+    }
+    if (transfer.is_final_status() &&
+        !backend->finished_transfer_ids_.contains(target.id)) {
+      backend->finished_transfer_ids_.insert(target.id);
+      emit backend->transferFinished(
+          target.id, receive_mode, ToQString(target.device_name),
+          ToQString(TransferMetadata::StatusToString(transfer.status())));
+      if (receive_mode) {
+        backend->StartFastInitiationMonitoring();
+      }
     }
   });
+}
+
+void Backend::StartIncomingOfferTimer(qint64 share_target_id) {
+  ResolveIncomingOffer(share_target_id);
+  auto* timer = new QTimer(this);
+  timer->setSingleShot(true);
+  timer->setInterval(kIncomingOfferTimeoutMilliseconds);
+  connect(timer, &QTimer::timeout, this, [this, share_target_id]() {
+    OnIncomingOfferTimeout(share_target_id);
+  });
+  incoming_offer_timers_.insert(share_target_id, timer);
+  timer->start();
+}
+
+void Backend::ResolveIncomingOffer(qint64 share_target_id) {
+  QTimer* timer = incoming_offer_timers_.take(share_target_id);
+  if (timer == nullptr) {
+    return;
+  }
+  timer->stop();
+  timer->deleteLater();
+  emit incomingOfferResolved(share_target_id);
+}
+
+void Backend::OnIncomingOfferTimeout(qint64 share_target_id) {
+  if (!incoming_offer_timers_.contains(share_target_id)) {
+    return;
+  }
+  ResolveIncomingOffer(share_target_id);
+  if (service_ != nullptr && !shutting_down_) {
+    service_->Reject(share_target_id,
+                     StatusCallback(QStringLiteral("Expire incoming offer")));
+  }
 }
 
 void Backend::SetDesiredMode(Mode mode) {
