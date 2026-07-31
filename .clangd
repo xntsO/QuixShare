@@ -1,0 +1,2 @@
+CompileFlags:
+  Add: ["-Ibazel-out/k8-fastbuild/bin", "-DNO_WEBRTC"]

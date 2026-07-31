@@ -59,7 +59,7 @@ bazel-*
 /.clwb/
 /dist/
 /sharing/linux/dist-minimal/
-/sharing/linux/app/linuxdeploy.AppImage
+/sharing/linux/app/linuxdeploy*
 
 # Devcontainers
 # /.devcontainer/

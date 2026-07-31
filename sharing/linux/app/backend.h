@@ -10,6 +10,7 @@
 #include <QAbstractListModel>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 
 #include "QtQmlIntegration/qqmlintegration.h"
 #include "qtmetamacros.h"
@@ -131,6 +132,8 @@ class Backend : public QObject,
   void outgoingTransferStartFailed(qint64 share_target_id);
 
  private:
+  friend class BackendTestPeer;
+
   using NearbySharingService = nearby::sharing::NearbySharingService;
   using ShareTarget = nearby::sharing::ShareTarget;
   using TransferMetadata = nearby::sharing::TransferMetadata;
@@ -157,6 +160,10 @@ class Backend : public QObject,
     kDiscovery,
   };
 
+  Backend(NearbySharingService& service,
+          nearby::api::FastInitiationManager& fast_init_manager,
+          int receive_timeout_milliseconds, QObject* parent);
+
   void OnShareTargetDiscovered(const ShareTarget& target) override;
   void OnShareTargetUpdated(const ShareTarget& target) override;
   void OnShareTargetLost(const ShareTarget& target) override;
@@ -168,6 +175,16 @@ class Backend : public QObject,
   void DriveMode();
   void OnModeStopped(Mode mode, NearbySharingService::StatusCodes status);
   void OnModeStarted(Mode mode, NearbySharingService::StatusCodes status);
+  void StartFastInitiationMonitoring();
+  void MaybeStartFastInitiationScanning();
+  void StopFastInitiationScanningForDiscovery();
+  void OnFastInitiationScanningStoppedForDiscovery();
+  void OnFastInitiationDevicesDiscovered();
+  void OnFastInitiationDevicesNotDiscovered();
+  void OnFastInitiationScanningError(
+      nearby::api::FastInitiationManager::Error error);
+  void OpenReceiveWindow(bool fallback);
+  void OnReceiveTimeout();
   std::function<void(NearbySharingService::StatusCodes)> StatusCallback(
       QString operation);
   void ReportStatus(const QString& operation,
@@ -176,13 +193,23 @@ class Backend : public QObject,
   ShareTargetModel targets_;
   ShareTransferModel transfers_;
   nearby::sharing::linux::NoOpAnalyticsRecorder analytics_recorder_;
-  nearby::sharing::linux::LinuxSharingPlatform platform_;
+  std::unique_ptr<nearby::sharing::linux::LinuxSharingPlatform> platform_;
+  nearby::api::FastInitiationManager* fast_init_manager_ = nullptr;
   NearbySharingService* service_ = nullptr;
   TransferCallback send_transfer_callback_;
   TransferCallback receive_transfer_callback_;
+  QTimer receive_timeout_timer_;
   Mode active_mode_ = Mode::kNone;
-  Mode desired_mode_ = Mode::kReceive;
+  Mode desired_mode_ = Mode::kNone;
   bool initialized_ = false;
   bool mode_operation_in_flight_ = false;
+  bool monitoring_requested_ = true;
+  bool fast_init_scan_stop_in_flight_ = false;
+  bool sender_present_ = false;
+  bool receive_trigger_armed_ = true;
+  bool receive_window_pending_ = false;
+  bool receive_offer_received_ = false;
+  bool fallback_receive_window_ = false;
+  bool fallback_receive_used_ = false;
   bool shutting_down_ = false;
 };

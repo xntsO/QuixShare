@@ -58,6 +58,7 @@ qt_cc_library(
         "//sharing:transfer_metadata",
         "//sharing:types",
         "//sharing/flags/generated:generated_flags",
+        "//sharing/internal/api:platform",
         "//sharing/linux:linux_sharing_platform",
         "//sharing/proto:enums_cc_proto",
         "@com_google_absl//absl/time",
@@ -65,6 +66,32 @@ qt_cc_library(
         "@rules_qt//:qt_hdrs",
         "@rules_qt//:qt_qml",
         "@rules_qt//:qt_qml_meta",
+    ],
+)
+
+cc_test(
+    name = "backend_test",
+    size = "small",
+    srcs = ["backend_test.cc"],
+    deps = [
+        ":backend",
+        "//sharing:attachments",
+        "//sharing:transfer_metadata",
+        "//sharing/internal/api:platform",
+        "@com_google_googletest//:gtest_main",
+        "@rules_qt//:qt_core",
+        "@rules_qt//:qt_gui",
+        "@rules_qt//:qt_hdrs",
+        "@rules_qt//:qt_labs_platform",
+        "@rules_qt//:qt_opengl",
+        "@rules_qt//:qt_qml",
+        "@rules_qt//:qt_qml_meta",
+        "@rules_qt//:qt_qml_workerscript",
+        "@rules_qt//:qt_quick",
+        "@rules_qt//:qt_quick_controls2",
+        "@rules_qt//:qt_quick_layouts",
+        "@rules_qt//:qt_quick_shapes",
+        "@rules_qt//:qt_widgets",
     ],
 )
 

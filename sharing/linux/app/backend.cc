@@ -30,6 +30,7 @@ namespace {
 using NearbySharingService = nearby::sharing::NearbySharingService;
 
 constexpr std::chrono::seconds kShutdownTimeout(10);
+constexpr int kReceiveTimeoutMilliseconds = 30 * 1000;
 
 QString ToQString(const std::string& value) {
   return QString::fromStdString(value);
@@ -359,11 +360,19 @@ Backend::Backend(QObject* parent)
     : QObject(parent),
       targets_(this),
       transfers_(this),
+      platform_(
+          std::make_unique<nearby::sharing::linux::LinuxSharingPlatform>()),
+      fast_init_manager_(&platform_->GetFastInitiationManager()),
       send_transfer_callback_(*this, false),
       receive_transfer_callback_(*this, true) {
+  receive_timeout_timer_.setSingleShot(true);
+  receive_timeout_timer_.setInterval(kReceiveTimeoutMilliseconds);
+  connect(&receive_timeout_timer_, &QTimer::timeout, this,
+          &Backend::OnReceiveTimeout);
+
   ConfigureFlags();
   service_ = nearby::sharing::NearbySharingServiceFactory::GetInstance()
-                 ->CreateSharingService(platform_, &analytics_recorder_,
+                 ->CreateSharingService(*platform_, &analytics_recorder_,
                                         /*event_logger=*/nullptr,
                                         /*supports_file_sync=*/false);
   if (service_ == nullptr) {
@@ -389,12 +398,30 @@ Backend::Backend(QObject* parent)
               status == NearbySharingService::StatusCodes::kOk;
           backend->ReportStatus(QStringLiteral("Initialize"), status);
           if (backend->initialized_) {
-            backend->DriveMode();
+            backend->StartFastInitiationMonitoring();
           } else {
             backend->desired_mode_ = Mode::kNone;
           }
         });
       });
+}
+
+Backend::Backend(NearbySharingService& service,
+                 nearby::api::FastInitiationManager& fast_init_manager,
+                 int receive_timeout_milliseconds, QObject* parent)
+    : QObject(parent),
+      targets_(this),
+      transfers_(this),
+      fast_init_manager_(&fast_init_manager),
+      service_(&service),
+      send_transfer_callback_(*this, false),
+      receive_transfer_callback_(*this, true),
+      initialized_(true) {
+  receive_timeout_timer_.setSingleShot(true);
+  receive_timeout_timer_.setInterval(receive_timeout_milliseconds);
+  connect(&receive_timeout_timer_, &QTimer::timeout, this,
+          &Backend::OnReceiveTimeout);
+  StartFastInitiationMonitoring();
 }
 
 Backend::~Backend() {
@@ -406,11 +433,22 @@ QString Backend::hostname() const {
 }
 
 void Backend::startReceive() {
-  SetDesiredMode(Mode::kReceive);
+  if (service_ == nullptr || shutting_down_) {
+    return;
+  }
+  StartFastInitiationMonitoring();
 }
 
 void Backend::startDiscovery() {
-  SetDesiredMode(Mode::kDiscovery);
+  if (service_ == nullptr || shutting_down_) {
+    return;
+  }
+  monitoring_requested_ = false;
+  receive_timeout_timer_.stop();
+  receive_window_pending_ = false;
+  receive_offer_received_ = false;
+  fallback_receive_window_ = false;
+  StopFastInitiationScanningForDiscovery();
 }
 
 bool Backend::sendFile(qint64 share_target_id, const QString& path) {
@@ -477,6 +515,12 @@ void Backend::shutdown() {
     return;
   }
   shutting_down_ = true;
+  monitoring_requested_ = false;
+  receive_timeout_timer_.stop();
+  auto& fast_init_manager = *fast_init_manager_;
+  if (fast_init_manager.IsScanning()) {
+    fast_init_manager.StopScanning(nullptr);
+  }
   desired_mode_ = Mode::kNone;
   const auto status = ShutdownService(*service_);
   if (status != NearbySharingService::StatusCodes::kOk) {
@@ -526,6 +570,8 @@ void Backend::OnTransferUpdate(
     if (receive_mode &&
         transfer.status() ==
             TransferMetadata::Status::kAwaitingLocalConfirmation) {
+      backend->receive_offer_received_ = true;
+      backend->receive_timeout_timer_.stop();
       emit backend->incomingTransfer(target.id);
     }
   });
@@ -628,6 +674,7 @@ void Backend::OnModeStopped(Mode mode,
     ReportStatus(QStringLiteral("Stop sharing mode"), status);
   }
   DriveMode();
+  MaybeStartFastInitiationScanning();
 }
 
 void Backend::OnModeStarted(Mode mode,
@@ -638,11 +685,183 @@ void Backend::OnModeStarted(Mode mode,
   }
   if (status == NearbySharingService::StatusCodes::kOk) {
     active_mode_ = mode;
+    if (mode == Mode::kReceive && receive_window_pending_) {
+      receive_window_pending_ = false;
+      receive_offer_received_ = false;
+      receive_timeout_timer_.start();
+    }
   } else {
     desired_mode_ = Mode::kNone;
+    receive_window_pending_ = false;
+    receive_timeout_timer_.stop();
+    if (fallback_receive_window_) {
+      monitoring_requested_ = false;
+    }
     ReportStatus(QStringLiteral("Start sharing mode"), status);
   }
   DriveMode();
+  MaybeStartFastInitiationScanning();
+}
+
+void Backend::StartFastInitiationMonitoring() {
+  monitoring_requested_ = true;
+  fallback_receive_used_ = false;
+  fallback_receive_window_ = false;
+  receive_window_pending_ = false;
+  receive_offer_received_ = false;
+  receive_timeout_timer_.stop();
+  SetDesiredMode(Mode::kNone);
+  MaybeStartFastInitiationScanning();
+}
+
+void Backend::MaybeStartFastInitiationScanning() {
+  if (!initialized_ || service_ == nullptr || shutting_down_ ||
+      !monitoring_requested_ || fast_init_scan_stop_in_flight_ ||
+      mode_operation_in_flight_ || active_mode_ != Mode::kNone ||
+      desired_mode_ != Mode::kNone) {
+    return;
+  }
+
+  if (fallback_receive_window_ && fallback_receive_used_) {
+    OpenReceiveWindow(/*fallback=*/true);
+    return;
+  }
+
+  auto& fast_init_manager = *fast_init_manager_;
+  if (fast_init_manager.IsScanning()) {
+    return;
+  }
+
+  sender_present_ = false;
+  receive_trigger_armed_ = true;
+  QPointer<Backend> backend(this);
+  fast_init_manager.StartScanning(
+      [backend]() {
+        if (backend) {
+          PostStatus(backend, [backend]() {
+            if (backend) {
+              backend->OnFastInitiationDevicesDiscovered();
+            }
+          });
+        }
+      },
+      [backend]() {
+        if (backend) {
+          PostStatus(backend, [backend]() {
+            if (backend) {
+              backend->OnFastInitiationDevicesNotDiscovered();
+            }
+          });
+        }
+      },
+      [backend](nearby::api::FastInitiationManager::Error error) {
+        if (backend) {
+          PostStatus(backend, [backend, error]() {
+            if (backend) {
+              backend->OnFastInitiationScanningError(error);
+            }
+          });
+        }
+      });
+}
+
+void Backend::StopFastInitiationScanningForDiscovery() {
+  auto& fast_init_manager = *fast_init_manager_;
+  if (!fast_init_manager.IsScanning()) {
+    SetDesiredMode(Mode::kDiscovery);
+    return;
+  }
+  if (fast_init_scan_stop_in_flight_) {
+    return;
+  }
+
+  fast_init_scan_stop_in_flight_ = true;
+  QPointer<Backend> backend(this);
+  fast_init_manager.StopScanning([backend]() {
+    if (backend) {
+      PostStatus(backend, [backend]() {
+        if (backend) {
+          backend->OnFastInitiationScanningStoppedForDiscovery();
+        }
+      });
+    }
+  });
+}
+
+void Backend::OnFastInitiationScanningStoppedForDiscovery() {
+  fast_init_scan_stop_in_flight_ = false;
+  sender_present_ = false;
+  receive_trigger_armed_ = true;
+  if (!shutting_down_ && !monitoring_requested_) {
+    SetDesiredMode(Mode::kDiscovery);
+  } else {
+    MaybeStartFastInitiationScanning();
+  }
+}
+
+void Backend::OnFastInitiationDevicesDiscovered() {
+  if (shutting_down_ || !monitoring_requested_) {
+    return;
+  }
+  sender_present_ = true;
+  const bool should_open_receive = receive_trigger_armed_;
+  receive_trigger_armed_ = false;
+  if (!should_open_receive || active_mode_ != Mode::kNone ||
+      desired_mode_ != Mode::kNone || mode_operation_in_flight_) {
+    return;
+  }
+  OpenReceiveWindow(/*fallback=*/false);
+}
+
+void Backend::OnFastInitiationDevicesNotDiscovered() {
+  if (shutting_down_ || !monitoring_requested_) {
+    return;
+  }
+  sender_present_ = false;
+  receive_trigger_armed_ = true;
+}
+
+void Backend::OnFastInitiationScanningError(
+    nearby::api::FastInitiationManager::Error error) {
+  if (shutting_down_ || !monitoring_requested_) {
+    return;
+  }
+  qWarning() << "Fast Initiation scanning failed with error"
+             << static_cast<int>(error);
+  if (fallback_receive_used_) {
+    monitoring_requested_ = false;
+    return;
+  }
+
+  fallback_receive_used_ = true;
+  fallback_receive_window_ = true;
+  if (active_mode_ == Mode::kReceive || desired_mode_ == Mode::kReceive) {
+    return;
+  }
+  if (active_mode_ == Mode::kNone && desired_mode_ == Mode::kNone &&
+      !mode_operation_in_flight_) {
+    OpenReceiveWindow(/*fallback=*/true);
+  }
+}
+
+void Backend::OpenReceiveWindow(bool fallback) {
+  fallback_receive_window_ = fallback;
+  receive_window_pending_ = true;
+  receive_offer_received_ = false;
+  SetDesiredMode(Mode::kReceive);
+}
+
+void Backend::OnReceiveTimeout() {
+  if (shutting_down_ || receive_offer_received_ ||
+      active_mode_ != Mode::kReceive) {
+    return;
+  }
+  if (fallback_receive_window_) {
+    monitoring_requested_ = false;
+  }
+  receive_window_pending_ = false;
+  fallback_receive_window_ = false;
+  SetDesiredMode(Mode::kNone);
 }
 
 std::function<void(NearbySharingService::StatusCodes)> Backend::StatusCallback(
