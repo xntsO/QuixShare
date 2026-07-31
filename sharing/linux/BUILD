@@ -61,6 +61,19 @@ cc_binary(
     deps = [":fast_init"],
 )
 
+cc_test(
+    name = "nearby_fast_init_manager_test",
+    size = "small",
+    srcs = ["nearby_fast_init_manager_test.cc"],
+    deps = [
+        ":fast_init",
+        "//internal/platform:base",
+        "//internal/platform/implementation:types",
+        "//internal/platform/implementation/linux",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
 
 cc_binary(
     name = "nearby_sharing_cli",

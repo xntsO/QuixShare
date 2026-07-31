@@ -47,16 +47,22 @@ class AdvertisementMonitor final
                        absl::string_view type,
                        std::shared_ptr<BluetoothDevices> devices,
                        api::ble::BleMedium::ScanningCallback scan_callback);
+  AdvertisementMonitor(sdbus::IConnection& system_bus,
+                       sdbus::ObjectPath object_path, Uuid service_uuid,
+                       api::ble::TxPowerLevel tx_power_level,
+                       absl::string_view type,
+                       std::shared_ptr<BluetoothDevices> devices,
+                       api::ble::BleMedium::ScanningCallback scan_callback);
   ~AdvertisementMonitor() { unregisterAdaptor(); }
 
  private:
   // Methods
   void Release() override {}
   void Activate() override {
-    LOG(INFO) <<__func__ << ": bluez advertisement monitor activated at path: "
+    LOG(INFO) << __func__ << ": bluez advertisement monitor activated at path: "
               << getObject().getObjectPath();
-    if (start_scanning_result_callback_ != nullptr) {
-      start_scanning_result_callback_(absl::OkStatus());
+    if (scan_callback_.start_scanning_result != nullptr) {
+      scan_callback_.start_scanning_result(absl::OkStatus());
     }
   }
 
@@ -66,9 +72,7 @@ class AdvertisementMonitor final
   // Properties
   std::string Type() override { return type_; };
   int16_t RSSILowThreshold() override { return 127; };
-  int16_t RSSIHighThreshold() override {
-    return 127;
-  }
+  int16_t RSSIHighThreshold() override { return 127; }
   uint16_t RSSISamplingPeriod() override {
     // The Windows implementation uses a sampling interval of 2 seconds.
     return 20;
@@ -79,13 +83,11 @@ class AdvertisementMonitor final
     return {{0,
              0x16,
              {static_cast<uint8_t>(service_id_data[3] & 0xFF),
-              static_cast<uint8_t>(service_id_data[2] & 0xFF)}
-    }};
+              static_cast<uint8_t>(service_id_data[2] & 0xFF)}}};
   };
 
   std::shared_ptr<BluetoothDevices> devices_;
-  api::ble::BleMedium::ScanCallback scan_callback_;
-  absl::AnyInvocable<void(absl::Status)> start_scanning_result_callback_;
+  api::ble::BleMedium::ScanningCallback scan_callback_;
 
   std::string type_;
   Uuid service_uuid_;

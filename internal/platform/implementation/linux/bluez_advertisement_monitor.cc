@@ -1,7 +1,5 @@
 #include "internal/platform/implementation/linux/bluez_advertisement_monitor.h"
 
-#include <regex>
-
 #include "internal/platform/byte_array.h"
 #include "internal/platform/implementation/ble.h"
 #include "internal/platform/implementation/linux/dbus.h"
@@ -11,7 +9,7 @@ namespace nearby {
 namespace linux {
 namespace bluez {
 AdvertisementMonitor::AdvertisementMonitor(
-    sdbus::IConnection &system_bus, Uuid service_uuid,
+    sdbus::IConnection& system_bus, Uuid service_uuid,
     api::ble::TxPowerLevel tx_power_level, absl::string_view type,
     std::shared_ptr<BluetoothDevices> devices,
     api::ble::BleMedium::ScanCallback scan_callback)
@@ -23,30 +21,38 @@ AdvertisementMonitor::AdvertisementMonitor(
                   std::move(scan_callback.advertisement_found_cb)}) {}
 
 AdvertisementMonitor::AdvertisementMonitor(
-    sdbus::IConnection &system_bus, Uuid service_uuid,
+    sdbus::IConnection& system_bus, Uuid service_uuid,
     api::ble::TxPowerLevel tx_power_level, absl::string_view type,
     std::shared_ptr<BluetoothDevices> devices,
     api::ble::BleMedium::ScanningCallback scan_callback)
-    : AdaptorInterfaces(system_bus, bluez::advertisement_monitor_path(
-                                        std::string{service_uuid})),
+    : AdvertisementMonitor(
+          system_bus,
+          bluez::advertisement_monitor_path(std::string{service_uuid}),
+          service_uuid, tx_power_level, type, std::move(devices),
+          std::move(scan_callback)) {}
+
+AdvertisementMonitor::AdvertisementMonitor(
+    sdbus::IConnection& system_bus, sdbus::ObjectPath object_path,
+    Uuid service_uuid, api::ble::TxPowerLevel tx_power_level,
+    absl::string_view type, std::shared_ptr<BluetoothDevices> devices,
+    api::ble::BleMedium::ScanningCallback scan_callback)
+    : AdaptorInterfaces(system_bus, std::move(object_path)),
       devices_(std::move(devices)),
-      scan_callback_{std::move(scan_callback.advertisement_found_cb)},
-      start_scanning_result_callback_(
-          std::move(scan_callback.start_scanning_result)),
+      scan_callback_(std::move(scan_callback)),
       type_(type),
       service_uuid_(service_uuid),
       tx_power_level_(tx_power_level) {
   registerAdaptor();
 }
 
-void AdvertisementMonitor::DeviceFound(const sdbus::ObjectPath &device) {
+void AdvertisementMonitor::DeviceFound(const sdbus::ObjectPath& device) {
   devices_->cleanup_lost_peripherals();
   auto peripheral = devices_->add_new_device(device);
   auto service_data = peripheral->ServiceData();
   if (!service_data.has_value()) return;
 
   struct api::ble::BleAdvertisementData adv_data;
-  for (const auto &[uuid_str, data] : *service_data) {
+  for (const auto& [uuid_str, data] : *service_data) {
     auto uuid = UuidFromString(uuid_str);
     if (!uuid.has_value()) {
       LOG(ERROR)
@@ -60,12 +66,15 @@ void AdvertisementMonitor::DeviceFound(const sdbus::ObjectPath &device) {
     adv_data.service_data.emplace(*uuid,
                                   std::string(bytes.begin(), bytes.end()));
   }
-  auto id = std::stoull(std::regex_replace(peripheral->GetMacAddress().ToString(),
-      std::regex("[:\\-]"), ""), nullptr, 16);
+  auto id = peripheral->GetMacAddress().address();
   scan_callback_.advertisement_found_cb(id, adv_data);
 }
 
-void AdvertisementMonitor::DeviceLost(const sdbus::ObjectPath &device) {
+void AdvertisementMonitor::DeviceLost(const sdbus::ObjectPath& device) {
+  auto peripheral = devices_->get_device_by_path(device);
+  if (peripheral != nullptr) {
+    scan_callback_.advertisement_lost_cb(peripheral->GetMacAddress().address());
+  }
   devices_->mark_peripheral_lost(device);
 }
 }  // namespace bluez
