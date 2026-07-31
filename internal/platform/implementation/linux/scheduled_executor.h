@@ -15,11 +15,17 @@
 #ifndef PLATFORM_IMPL_LINUX_SCHEDULED_EXECUTOR_H_
 #define PLATFORM_IMPL_LINUX_SCHEDULED_EXECUTOR_H_
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <memory>
+#include <mutex>
+#include <queue>
+#include <thread>
 #include <utility>
 #include <vector>
 
-#include "absl/synchronization/notification.h"
 #include "absl/time/time.h"
 #include "internal/platform/implementation/cancelable.h"
 #include "internal/platform/implementation/linux/executor.h"
@@ -38,7 +44,7 @@ class ScheduledExecutor : public api::ScheduledExecutor {
  public:
   ScheduledExecutor();
 
-  ~ScheduledExecutor() override = default;
+  ~ScheduledExecutor() override;
 
   // Cancelable is kept both in the executor context, and in the caller context.
   // We want Cancelable to live until both caller and executor are done with it.
@@ -54,43 +60,62 @@ class ScheduledExecutor : public api::ScheduledExecutor {
   void Shutdown() override;
 
  private:
-  class ScheduledTask : public api::Cancelable {
-   public:
-    explicit ScheduledTask(Runnable&& task, absl::Duration duration)
-        : task_(std::move(task)), duration_(duration) {}
-
-    bool Cancel() override {
-      if (is_executed_ || is_cancelled_) {
-        return false;
-      }
-
-      is_cancelled_ = true;
-      notification_.Notify();
-      return true;
-    };
-
-    void Start() {
-      if (is_executed_ ||
-          notification_.WaitForNotificationWithTimeout(duration_)) {
-        return;
-      }
-
-      is_executed_ = true;
-      task_();
-    }
-
-    bool IsDone() const { return is_cancelled_ || is_executed_; }
-
-   private:
-    Runnable task_;
-    absl::Duration duration_;
-    absl::Notification notification_;
-    bool is_cancelled_ = false;
-    bool is_executed_ = false;
+  struct SchedulerState {
+    std::mutex mutex;
+    std::condition_variable condition;
+    std::atomic<uint64_t> generation = 0;
+    bool shut_down = false;
   };
 
+  class ScheduledTask : public api::Cancelable {
+   public:
+    ScheduledTask(Runnable&& task,
+                  std::chrono::steady_clock::time_point deadline,
+                  uint64_t sequence,
+                  std::weak_ptr<SchedulerState> scheduler_state)
+        : task_(std::move(task)),
+          deadline_(deadline),
+          sequence_(sequence),
+          scheduler_state_(std::move(scheduler_state)) {}
+
+    bool Cancel() override;
+    bool TryDispatch();
+    bool IsCancelled() const;
+    void Run();
+
+    std::chrono::steady_clock::time_point deadline() const { return deadline_; }
+    uint64_t sequence() const { return sequence_; }
+
+   private:
+    enum class State { kPending, kDispatched, kCancelled };
+
+    Runnable task_;
+    const std::chrono::steady_clock::time_point deadline_;
+    const uint64_t sequence_;
+    std::weak_ptr<SchedulerState> scheduler_state_;
+    std::atomic<State> state_{State::kPending};
+  };
+
+  struct ScheduledTaskCompare {
+    bool operator()(const std::shared_ptr<ScheduledTask>& lhs,
+                    const std::shared_ptr<ScheduledTask>& rhs) const {
+      if (lhs->deadline() == rhs->deadline()) {
+        return lhs->sequence() > rhs->sequence();
+      }
+      return lhs->deadline() > rhs->deadline();
+    }
+  };
+
+  void RunScheduler();
+
   std::unique_ptr<nearby::linux::Executor> executor_ = nullptr;
-  std::vector<std::shared_ptr<ScheduledTask>> scheduled_tasks_;
+  std::shared_ptr<SchedulerState> scheduler_state_;
+  std::priority_queue<std::shared_ptr<ScheduledTask>,
+                      std::vector<std::shared_ptr<ScheduledTask>>,
+                      ScheduledTaskCompare>
+      scheduled_tasks_;
+  std::thread scheduler_thread_;
+  uint64_t next_sequence_ = 0;
   std::atomic_bool shut_down_ = false;
 };
 

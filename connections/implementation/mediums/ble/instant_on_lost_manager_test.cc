@@ -124,6 +124,15 @@ TEST_F(InstantOnLostManagerTest, ShutdownMultipleTimes) {
   EXPECT_FALSE(instant_on_lost_manager().Shutdown());
 }
 
+TEST_F(InstantOnLostManagerTest, ShutdownWhileOnLostAdvertising) {
+  instant_on_lost_manager().OnAdvertisingStarted(
+      std::string(kServiceIdA), ByteArray(kData1.data(), kData1.size()));
+  instant_on_lost_manager().OnAdvertisingStopped(std::string(kServiceIdA));
+  EXPECT_TRUE(instant_on_lost_manager().IsOnLostAdvertisingForTesting());
+
+  EXPECT_TRUE(instant_on_lost_manager().Shutdown());
+}
+
 TEST_F(InstantOnLostManagerTest, AdvertisingOnShutdownManager) {
   instant_on_lost_manager().Shutdown();
   instant_on_lost_manager().OnAdvertisingStarted(

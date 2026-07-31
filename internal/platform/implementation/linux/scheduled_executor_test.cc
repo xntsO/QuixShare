@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <atomic>
 #include <memory>
 #include <utility>
 
@@ -96,6 +97,36 @@ TEST(ScheduledExecutorTests, ScheduleSucceeds) {
   ASSERT_EQ(std::this_thread::get_id(), threadIds->at(0));
   //  We should've run all runnables on the worker thread
   ASSERT_EQ(output, expected);
+}
+
+TEST(ScheduledExecutorTests, DelayedTaskDoesNotBlockImmediateTask) {
+  absl::Notification notification;
+  ScheduledExecutor executor;
+
+  auto delayed = executor.Schedule([]() {}, absl::Seconds(2));
+  executor.Execute([&notification]() { notification.Notify(); });
+
+  EXPECT_TRUE(
+      notification.WaitForNotificationWithTimeout(absl::Milliseconds(200)));
+  EXPECT_TRUE(delayed->Cancel());
+  executor.Shutdown();
+}
+
+TEST(ScheduledExecutorTests, TasksRunInDeadlineOrder) {
+  absl::Notification short_task_ran;
+  std::atomic_bool long_task_ran = false;
+  ScheduledExecutor executor;
+
+  auto long_task = executor.Schedule(
+      [&long_task_ran]() { long_task_ran = true; }, absl::Seconds(2));
+  executor.Schedule([&short_task_ran]() { short_task_ran.Notify(); },
+                    absl::Milliseconds(20));
+
+  EXPECT_TRUE(
+      short_task_ran.WaitForNotificationWithTimeout(absl::Milliseconds(200)));
+  EXPECT_FALSE(long_task_ran);
+  EXPECT_TRUE(long_task->Cancel());
+  executor.Shutdown();
 }
 
 TEST(ScheduledExecutorTests, CancelSucceeds) {
