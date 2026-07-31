@@ -24,6 +24,7 @@
 #include "absl/status/statusor.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
+#include "absl/time/time.h"
 #include "internal/base/file_path.h"
 #include "location/nearby/sharing/lib/rpc/sharing_rpc_client.h"
 #include "location/nearby/sharing/lib/sync/sync_binding_prefs.pb.h"
@@ -83,10 +84,27 @@ class SyncManager {
     return GetSyncBinding(binding_id).has_value();
   }
 
+  bool HasSyncBindings() const {
+    if (preference_manager_ == nullptr) {
+      return false;
+    }
+    std::optional<sync::SyncBindingPrefs> prefs =
+        preference_manager_->GetSyncBindingValue();
+    return prefs.has_value() && prefs->sync_bindings_size() > 0;
+  }
+
   std::optional<sync::SyncConfigPrefs> GetSyncConfig(
       absl::string_view binding_id) const {
     static_cast<void>(binding_id);
     return std::nullopt;
+  }
+
+  void SetSyncConfigBackupTime(absl::string_view binding_id, bool success,
+                               absl::Time backup_time) {
+    // Sync config persistence is unavailable in this compatibility build.
+    static_cast<void>(binding_id);
+    static_cast<void>(success);
+    static_cast<void>(backup_time);
   }
 
   absl::StatusOr<FilePath> UpdateSyncBindingDestinationDirectory(
@@ -123,4 +141,3 @@ class SyncManager {
 }  // namespace nearby::sharing
 
 #endif  // LOCATION_NEARBY_SHARING_LIB_SYNC_SYNC_MANAGER_H_
-

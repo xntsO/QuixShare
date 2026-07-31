@@ -28,6 +28,7 @@
 #include "absl/time/time.h"
 #include "internal/platform/implementation/platform.h"
 #include "location/nearby/sharing/lib/sync/sync_binding_prefs.pb.h"
+#include "location/nearby/sharing/lib/sync/sync_config_prefs.pb.h"
 #include "nlohmann/json.hpp"
 #include "sharing/internal/api/private_certificate_data.h"
 #include "sharing/internal/public/pref_names.h"
@@ -203,6 +204,13 @@ class LinuxPreferenceManager final : public PreferenceManager {
                 serialized);
     }
   }
+  void SetSyncConfigValue(
+      absl::string_view binding_id,
+      const nearby::sharing::sync::SyncConfigPrefs& value) override {
+    // Sync config persistence is unavailable in this compatibility build.
+    static_cast<void>(binding_id);
+    static_cast<void>(value);
+  }
 
   bool GetBoolean(absl::string_view key, bool default_value) const override {
     return storage_ != nullptr ? storage_->GetBoolean(key, default_value)
@@ -327,6 +335,14 @@ class LinuxPreferenceManager final : public PreferenceManager {
     }
     return value;
   }
+  std::optional<nearby::sharing::sync::SyncConfigPrefs> GetSyncConfigValue(
+      absl::string_view binding_id) const override {
+    static_cast<void>(binding_id);
+    return std::nullopt;
+  }
+  void RemoveSyncConfigPref(absl::string_view binding_id) override {
+    static_cast<void>(binding_id);
+  }
   void Remove(absl::string_view key) override {
     if (storage_ != nullptr) {
       storage_->Remove(key);
@@ -339,6 +355,7 @@ class LinuxPreferenceManager final : public PreferenceManager {
       NotifyPreferenceChanged(PrefNames::kBindingConfigPrefix);
     }
   }
+  void RemoveAllSyncConfigs() override {}
   void AddObserver(
       absl::string_view name,
       std::function<void(absl::string_view pref_name)> observer) override {
