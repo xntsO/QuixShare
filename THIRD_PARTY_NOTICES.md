@@ -55,3 +55,5 @@ The QuixShare penguin-transfer logo was supplied by the project maintainer in
 September 2026 as the project's original branding. It is not derived from the
 Google Quick Share or RQuickShare icons. The high-contrast taskbar derivative
 was prepared from that original mark for legibility on dark desktop panels.
+Both logo files are Copyright 2026 xntsO. All rights reserved except for the
+limited permissions in `BRANDING.md`; they are not licensed under Apache-2.0.

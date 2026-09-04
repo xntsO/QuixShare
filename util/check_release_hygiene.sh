@@ -12,6 +12,7 @@ fail() {
 
 for required in \
   LICENSE \
+  BRANDING.md \
   PROVENANCE.md \
   SECURITY.md \
   docs/RELEASING.md \
@@ -21,6 +22,8 @@ for required in \
 done
 
 grep -q "Apache License" LICENSE || fail "LICENSE is not Apache-2.0 text"
+grep -q "not licensed under the Apache License 2.0" BRANDING.md ||
+  fail "BRANDING.md must distinguish protected branding from source licensing"
 grep -qi "independent project" README.md ||
   fail "README must state that this is an independent project"
 if grep -q "cla.developers.google.com" CONTRIBUTING.md; then
@@ -98,8 +101,12 @@ if launchable.get("type") != "desktop-id":
     sys.exit("release hygiene: AppStream launchable must be a desktop-id")
 if launchable.text.strip() != desktop_path.name:
     sys.exit("release hygiene: AppStream launchable and desktop filename differ")
-if root.findtext("project_license").strip() != "Apache-2.0":
-    sys.exit("release hygiene: AppStream project_license must be Apache-2.0")
+expected_license = "Apache-2.0 AND LicenseRef-QuixShare-Branding"
+if root.findtext("project_license").strip() != expected_license:
+    sys.exit(
+        "release hygiene: AppStream project_license must distinguish the "
+        "Apache-2.0 code from protected QuixShare branding"
+    )
 PY
 
 if command -v desktop-file-validate >/dev/null 2>&1; then

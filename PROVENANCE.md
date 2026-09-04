@@ -47,3 +47,8 @@ It is published as QuixShare with the application ID
 The taskbar-safe logo is a high-contrast derivative of that supplied artwork.
 Compatibility may be described factually in documentation without presenting
 the application as an official client.
+
+The QuixShare name and both logo files are owned by xntsO and excluded from the
+Apache-2.0 source-code license. Their permitted uses are defined separately in
+[`BRANDING.md`](BRANDING.md). QuixShare is claimed as a project mark; no claim
+of trademark registration is made.

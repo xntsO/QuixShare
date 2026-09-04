@@ -366,7 +366,7 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "Built from the open-source Google Nearby codebase and community Linux work. The interface was inspired by RQuickShare, but no RQuickShare code is included. Core source is Apache-2.0; included components keep their own licenses."
+                                text: "Built from the open-source Google Nearby codebase and community Linux work. The interface was inspired by RQuickShare, but no RQuickShare code is included. Core source is Apache-2.0; included components keep their own licenses. The QuixShare name and artwork are owned by xntsO and covered by a separate branding policy."
                                 color: AppSettings.mutedText
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap

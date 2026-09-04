@@ -113,6 +113,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements and
 
 ## License
 
-The repository is licensed under the [Apache License 2.0](LICENSE). Bundled
-third-party components retain their own licenses; release artifacts must carry
-the corresponding notices and license materials.
+The project source code is licensed under the
+[Apache License 2.0](LICENSE). Bundled third-party components retain their own
+licenses; release artifacts must carry the corresponding notices and license
+materials.
+
+The QuixShare name and project artwork are owned by xntsO and are not licensed
+under Apache-2.0. Limited permission for truthful references and faithful
+redistribution is described in [BRANDING.md](BRANDING.md).

@@ -11,7 +11,7 @@ QtObject {
     // are derived from it so they cannot drift independently.
     readonly property string projectUrl: "https://github.com/xntsO/QuixShare"
     readonly property string issuesUrl: projectUrl + "/issues"
-    readonly property string projectHelpUrl: projectUrl + "#contributing-and-support"
+    readonly property string projectHelpUrl: projectUrl + "#contributing-and-security"
     readonly property string upstreamUrl: "https://github.com/google/nearby"
     readonly property string interfaceInspirationUrl: "https://github.com/Martichou/rquickshare"
 
