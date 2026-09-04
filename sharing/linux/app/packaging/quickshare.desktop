@@ -1,9 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=QuickShare
-Comment=Share files with nearby devices
-Exec=quickshare
-Icon=quickshare
-Categories=Network;FileTransfer;
-Terminal=false
-StartupNotify=true

@@ -23,10 +23,10 @@ readonly APPIMAGE_RUNFILES="$WORKSPACE_ROOT/bazel-bin/sharing/linux/app/appimage
 readonly APPIMAGETOOL="$APPIMAGE_RUNFILES/+http_file+appimagetool_x86_64/file/appimagetool-x86_64.AppImage"
 readonly RUNTIME="$APPIMAGE_RUNFILES/+http_file+appimage_runtime_x86_64/file/runtime-x86_64"
 readonly OUTPUT_DIR="$WORKSPACE_ROOT/sharing/linux/dist-minimal"
-readonly FINAL_APPDIR="$OUTPUT_DIR/QuickShare.AppDir"
-readonly OUTPUT_APPIMAGE="$OUTPUT_DIR/QuickShare-x86_64.AppImage"
+readonly FINAL_APPDIR="$OUTPUT_DIR/QuixShare.AppDir"
+readonly OUTPUT_APPIMAGE="$OUTPUT_DIR/QuixShare-x86_64.AppImage"
 readonly STAGE="$(mktemp -d /tmp/nearby-minimal-appdir.XXXXXX)"
-readonly APPDIR="$STAGE/QuickShare.AppDir"
+readonly APPDIR="$STAGE/QuixShare.AppDir"
 
 cleanup() {
   rm -rf -- "$STAGE"
@@ -56,10 +56,11 @@ mkdir -p \
   "$APPDIR/usr/lib/qt6/plugins" \
   "$APPDIR/usr/lib/qt6/qml" \
   "$APPDIR/usr/share/applications" \
-  "$APPDIR/usr/share/icons/hicolor/scalable/apps" \
+  "$APPDIR/usr/share/doc/quixshare" \
+  "$APPDIR/usr/share/icons/hicolor/512x512/apps" \
   "$APPDIR/usr/share/metainfo"
 
-install -m 0755 "$BINARY" "$APPDIR/usr/bin/quickshare"
+install -m 0755 "$BINARY" "$APPDIR/usr/bin/quixshare"
 
 copy_qt_library() {
   local name="$1"
@@ -230,20 +231,25 @@ while true; do
 done
 
 install -m 0644 \
-  "$WORKSPACE_ROOT/sharing/linux/app/packaging/quickshare.desktop" \
-  "$APPDIR/usr/share/applications/quickshare.desktop"
+  "$WORKSPACE_ROOT/sharing/linux/app/packaging/io.github.xntso.quixshare.desktop" \
+  "$APPDIR/usr/share/applications/io.github.xntso.quixshare.desktop"
 install -m 0644 \
-  "$WORKSPACE_ROOT/sharing/linux/app/packaging/quickshare.metainfo.xml" \
-  "$APPDIR/usr/share/metainfo/quickshare.metainfo.xml"
+  "$WORKSPACE_ROOT/sharing/linux/app/packaging/quixshare.metainfo.xml" \
+  "$APPDIR/usr/share/metainfo/io.github.xntso.quixshare.appdata.xml"
 install -m 0644 \
-  "$WORKSPACE_ROOT/sharing/linux/app/icons/quickshare.svg" \
-  "$APPDIR/usr/share/icons/hicolor/scalable/apps/quickshare.svg"
+  "$WORKSPACE_ROOT/sharing/linux/app/icons/quixshare-taskbar.png" \
+  "$APPDIR/usr/share/icons/hicolor/512x512/apps/quixshare.png"
+install -m 0644 \
+  "$WORKSPACE_ROOT/LICENSE" \
+  "$WORKSPACE_ROOT/NOTICE" \
+  "$WORKSPACE_ROOT/THIRD_PARTY_NOTICES.md" \
+  "$APPDIR/usr/share/doc/quixshare/"
 
 cp \
-  "$APPDIR/usr/share/applications/quickshare.desktop" \
+  "$APPDIR/usr/share/applications/io.github.xntso.quixshare.desktop" \
   "$APPDIR/"
 cp \
-  "$APPDIR/usr/share/icons/hicolor/scalable/apps/quickshare.svg" \
+  "$APPDIR/usr/share/icons/hicolor/512x512/apps/quixshare.png" \
   "$APPDIR/"
 
 printf '%s\n' \
@@ -265,8 +271,9 @@ printf '%s\n' \
   'export QML_IMPORT_PATH="$HERE/usr/lib/qt6/qml"' \
   'export QML2_IMPORT_PATH="$HERE/usr/lib/qt6/qml"' \
   'export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"' \
+  'unset QUIXSHARE_ALLOW_WIFI_RECONFIGURATION' \
   '' \
-  'exec "$HERE/usr/bin/quickshare" "$@"' \
+  'exec "$HERE/usr/bin/quixshare" "$@"' \
   >"$APPDIR/AppRun"
 chmod 0755 "$APPDIR/AppRun"
 

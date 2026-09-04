@@ -1,7 +1,9 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 
+#include <QByteArray>
 #include <QHash>
 #include <QObject>
 #include <QPointer>
@@ -11,13 +13,18 @@
 class Backend;
 class QApplication;
 class QMenu;
+class QProcess;
 class QQuickWindow;
 class QSystemTrayIcon;
 
 class ApplicationController : public QObject {
   Q_OBJECT
-  Q_CLASSINFO("D-Bus Interface", "com.google.quickshare")
+  Q_CLASSINFO("D-Bus Interface", "io.github.xntso.quixshare")
   Q_PROPERTY(bool closeToTray READ closeToTray NOTIFY closeToTrayChanged)
+  Q_PROPERTY(bool folderPickerBusy READ folderPickerBusy NOTIFY
+                 folderPickerBusyChanged)
+  Q_PROPERTY(bool filePickerBusy READ filePickerBusy NOTIFY
+                 filePickerBusyChanged)
 
  public:
   explicit ApplicationController(QApplication& application,
@@ -31,13 +38,23 @@ class ApplicationController : public QObject {
   void AttachWindow(QObject* root_object);
 
   bool closeToTray() const { return close_to_tray_; }
+  bool folderPickerBusy() const;
+  bool filePickerBusy() const;
 
  public slots:
   Q_SCRIPTABLE void ShowWindow();
+  Q_INVOKABLE bool chooseDownloadFolder(const QString& initial_path);
+  Q_INVOKABLE bool chooseFiles(const QString& initial_path);
   void Quit();
 
  signals:
   void closeToTrayChanged();
+  void folderPickerBusyChanged();
+  void filePickerBusyChanged();
+  void downloadFolderSelected(const QString& path);
+  void filesSelected(const QStringList& paths);
+  void nativeFolderPickerUnavailable();
+  void nativeFilePickerUnavailable();
   void acceptRequested(qint64 share_target_id);
   void rejectRequested(qint64 share_target_id);
 
@@ -60,11 +77,19 @@ class ApplicationController : public QObject {
   void RemoveNotificationMapping(uint notification_id);
   QString IncomingOfferBody(const QString& device_name, int attachment_count,
                             qint64 total_bytes) const;
+  static std::optional<QString> ValidateSelectedFolder(
+      const QByteArray& picker_output);
+  static QStringList ValidateSelectedFiles(const QByteArray& picker_output);
+  QString InitialFolder(const QString& requested_path) const;
+  void ClearFolderPicker(QProcess* process);
+  void ClearFilePicker(QProcess* process);
 
   QApplication& application_;
   QPointer<QQuickWindow> window_;
   QSystemTrayIcon* tray_icon_ = nullptr;
   std::unique_ptr<QMenu> tray_menu_;
+  QPointer<QProcess> folder_picker_;
+  QPointer<QProcess> file_picker_;
   QHash<uint, qint64> notification_to_transfer_;
   QHash<qint64, uint> transfer_to_notification_;
   QSet<qint64> background_accepted_transfers_;

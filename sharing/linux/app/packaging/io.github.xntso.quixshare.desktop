@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=QuixShare
+Comment=Independent Linux client for compatible nearby sharing devices
+Exec=quixshare
+Icon=quixshare
+Categories=Network;FileTransfer;
+Terminal=false
+StartupNotify=true

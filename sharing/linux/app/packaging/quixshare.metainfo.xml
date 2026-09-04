@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.xntso.quixshare</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>QuixShare</name>
+  <developer id="io.github.xntso">
+    <name>xntsO and community contributors</name>
+  </developer>
+  <summary>Independent Linux client for compatible nearby sharing devices</summary>
+  <description>
+    <p>
+      This independent, unofficial Linux client discovers compatible nearby
+      sharing devices and transfers files over local wireless connections.
+      It is not affiliated with or endorsed by Google or device manufacturers.
+    </p>
+    <p>
+      It is based on the open-source Google Nearby codebase and community Linux
+      work. Compatibility is not guaranteed.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/xntsO/QuixShare</url>
+  <url type="bugtracker">https://github.com/xntsO/QuixShare/issues</url>
+  <url type="vcs-browser">https://github.com/xntsO/QuixShare</url>
+  <launchable type="desktop-id">io.github.xntso.quixshare.desktop</launchable>
+  <provides>
+    <binary>quixshare</binary>
+  </provides>
+  <content_rating type="oars-1.1"/>
+</component>

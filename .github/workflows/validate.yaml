@@ -16,8 +16,13 @@ name: Validate
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 env:
   FORCE_COLOR: true
+  CC: /usr/bin/clang-21
+  CXX: /usr/bin/clang++-21
 
 jobs:
   build-linux:
@@ -25,12 +30,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Set up Bazelisk
-        uses: bazel-contrib/setup-bazel@0.18.0
+        uses: bazel-contrib/setup-bazel@083175551ceeceebc757ebee2127fde78840ca77 # 0.18.0
         with:
           # Avoid downloading Bazel every time.
           bazelisk-cache: true
@@ -38,6 +44,9 @@ jobs:
           disk-cache: ${{ github.workflow }}
           # Share repository cache between workflows.
           repository-cache: true
+
+      - name: Check release hygiene
+        run: ./util/check_release_hygiene.sh
 
       - name: Install build dependencies
         run: |
@@ -93,19 +102,38 @@ jobs:
       #       --cxxopt='-fvisibility-inlines-hidden' \
       #       //presence
 
-      - name: Build Nearby Sharing Linux 
+      - name: Build Nearby Sharing Linux
         run: |
           bazel build \
             --@com_google_protobuf//bazel/toolchains:prefer_prebuilt_protoc=true \
             --copt='-DGITHUB_BUILD' \
             //sharing/linux:nearby_sharing_cli
 
+      - name: Test Linux release-critical components
+        run: |
+          bazel test \
+            --@com_google_protobuf//bazel/toolchains:prefer_prebuilt_protoc=true \
+            --copt='-DGITHUB_BUILD' \
+            //internal/platform/implementation/linux/tests:bluetooth_classic_medium_test \
+            //internal/platform/implementation/linux/tests:network_safety_test \
+            //internal/platform/implementation/linux/tests:stream_test \
+            //sharing/linux/app:application_controller_test \
+            //sharing/linux/app:backend_test \
+            //sharing/linux/app:native_file_logging_test
+
+      - name: Build Linux desktop packaging target
+        run: |
+          bazel build \
+            --@com_google_protobuf//bazel/toolchains:prefer_prebuilt_protoc=true \
+            --copt='-DGITHUB_BUILD' \
+            //sharing/linux/app:appimage
+
   #build-rust-linux:
   #  name: Build Rust on Linux
   #  runs-on: ubuntu-latest
   #  steps:
   #    - name: Checkout
-  #      uses: actions/checkout@v6
+  #      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
   #      with:
   #        submodules: recursive
 

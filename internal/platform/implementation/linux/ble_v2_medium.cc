@@ -57,22 +57,54 @@ using nearby::connections::config_package_nearby::nearby_connections_feature::
 
 }  // namespace
 BleV2Medium::~BleV2Medium() {
-
-  LOG(INFO) << __func__ << ": BleV2Medium cleanup ";
+  LOG(INFO) << __func__ << ": BleV2Medium cleanup";
+  StopAllScanningForShutdown();
   try {
-      StopAdvertising();
-    } catch (const std::exception& error) {
-      LOG(ERROR) << __func__
-                 << ": Failed to stop advertising: " <<
-                 error.what();
+    StopAdvertising();
+  } catch (const std::exception& error) {
+    LOG(ERROR) << __func__ << ": Failed to stop advertising: " << error.what();
+  }
+}
+
+void BleV2Medium::StopAllScanningForShutdown() {
+  bool had_active_scanning = false;
+  {
+    absl::MutexLock lock(&active_adv_monitors_mutex_);
+    had_active_scanning = !active_adv_monitors_.empty();
+    for (auto& [uuid, session] : active_adv_monitors_) {
+      auto& [monitor, watcher] = session;
+      try {
+        monitor->emitInterfacesRemovedSignal({sdbus::InterfaceName(
+            org::bluez::AdvertisementMonitor1_adaptor::INTERFACE_NAME)});
+      } catch (const sdbus::Error& error) {
+        LOG(WARNING) << __func__ << ": Failed to remove monitor "
+                     << monitor->getObject().getObjectPath() << ": "
+                     << error.getMessage();
+      }
     }
+    active_adv_monitors_.clear();
+    cur_monitored_service_uuid_.reset();
+  }
+
+  if (!had_active_scanning) {
+    return;
+  }
+  auto& adapter = adapter_.GetBluezAdapterObject();
+  try {
+    adapter.StopDiscovery();
+  } catch (const sdbus::Error& error) {
+    // BlueZ may already have stopped discovery while shutdown was in flight.
+    if (error.getName() != "org.bluez.Error.NotReady") {
+      DBUS_LOG_METHOD_CALL_ERROR(&adapter, "StopDiscovery", error);
+    }
+  }
 }
 
 BleV2Medium::BleV2Medium(BluetoothAdapter& adapter)
     : system_bus_(adapter.GetConnection()),
       adapter_(adapter),
-      devices_(std::make_unique<BluetoothDevices>(
-          system_bus_, adapter_.GetObjectPath())),
+      devices_(std::make_unique<BluetoothDevices>(system_bus_,
+                                                  adapter_.GetObjectPath())),
       gatt_discovery_(std::make_shared<BluezGattDiscovery>(system_bus_)),
       root_object_manager_(std::make_unique<RootObjectManager>(
           *system_bus_,

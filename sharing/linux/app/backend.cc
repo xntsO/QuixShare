@@ -18,12 +18,14 @@
 #include "connections/implementation/flags/nearby_connections_feature_flags.h"
 #include "internal/base/file_path.h"
 #include "internal/flags/nearby_flags.h"
+#include "internal/platform/implementation/linux/network_safety.h"
 #include "sharing/advertisement.h"
 #include "sharing/file_attachment.h"
 #include "sharing/flags/generated/nearby_sharing_feature_flags.h"
 #include "sharing/nearby_sharing_service_factory.h"
 #include "sharing/nearby_sharing_settings.h"
 #include "sharing/proto/enums.pb.h"
+#include "sharing/transfer_metadata_builder.h"
 
 namespace {
 
@@ -43,6 +45,8 @@ QString NormalizeLocalPath(const QString& path) {
 }
 
 void ConfigureFlags() {
+  const nearby::linux::WifiMediumPolicy wifi_policy =
+      nearby::linux::GetWifiMediumPolicy();
   nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
       nearby::sharing::config_package_nearby::nearby_sharing_feature::
           kEnableBleForTransfer,
@@ -60,21 +64,39 @@ void ConfigureFlags() {
           kEnableDynamicRoleSwitch,
       true);
   nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      nearby::sharing::config_package_nearby::nearby_sharing_feature::
+          kEnableMediumWifiLan,
+      wifi_policy.wifi_lan);
+  nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
       nearby::connections::config_package_nearby::nearby_connections_feature::
           kEnableWifiDirect,
-      true);
+      wifi_policy.wifi_direct);
   nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
       nearby::connections::config_package_nearby::nearby_connections_feature::
           kEnableWifiDirectGcOnly,
-      true);
+      wifi_policy.wifi_direct);
 }
 
 std::unique_ptr<nearby::sharing::AttachmentContainer> CreateFileAttachments(
-    const std::string& path) {
+    const std::vector<std::string>& paths) {
   nearby::sharing::AttachmentContainer::Builder builder;
-  builder.AddFileAttachment(
-      nearby::sharing::FileAttachment(nearby::FilePath(path)));
+  for (const std::string& path : paths) {
+    builder.AddFileAttachment(
+        nearby::sharing::FileAttachment(nearby::FilePath(path)));
+  }
   return builder.Build();
+}
+
+QString AttachmentPath(
+    const nearby::sharing::AttachmentContainer& attachments) {
+  const auto& files = attachments.GetFileAttachments();
+  if (files.empty()) {
+    return {};
+  }
+  if (files.front().file_path().has_value()) {
+    return ToQString(files.front().file_path()->ToString());
+  }
+  return ToQString(std::string(files.front().file_name()));
 }
 
 NearbySharingService::StatusCodes ShutdownService(
@@ -244,13 +266,14 @@ void ShareTransferModel::ApplyTarget(const ShareTarget& target) {
 void ShareTransferModel::ApplyTransfer(bool receive_mode,
                                        const ShareTarget& target,
                                        const TransferMetadata& transfer,
-                                       int64_t total_bytes) {
+                                       int64_t total_bytes,
+                                       const QString& local_path) {
   int row = IndexOf(target.id);
   if (row < 0) {
     row = static_cast<int>(transfers_.size());
     beginInsertRows(QModelIndex(), row, row);
-    transfers_.push_back(
-        Row{target.id, receive_mode, target, transfer, total_bytes, {}});
+    transfers_.push_back(Row{target.id, receive_mode, target, transfer,
+                             total_bytes, local_path});
     endInsertRows();
     return;
   }
@@ -259,6 +282,9 @@ void ShareTransferModel::ApplyTransfer(bool receive_mode,
   transfers_[row].target = target;
   transfers_[row].transfer = transfer;
   transfers_[row].total_bytes = total_bytes;
+  if (!local_path.isEmpty()) {
+    transfers_[row].local_path = local_path;
+  }
   EmitRowChanged(row);
 }
 
@@ -284,6 +310,28 @@ void ShareTransferModel::PrepareOutgoingTransfer(
   transfers_[row].total_bytes = 0;
   transfers_[row].local_path = local_path;
   EmitRowChanged(row);
+}
+
+void ShareTransferModel::MarkOutgoingTransferFailed(int64_t target_id) {
+  const int row = IndexOf(target_id);
+  if (row < 0) {
+    return;
+  }
+  transfers_[row].transfer = nearby::sharing::TransferMetadataBuilder()
+                                 .set_status(TransferMetadata::Status::kFailed)
+                                 .build();
+  EmitRowChanged(row);
+}
+
+void ShareTransferModel::RemoveFinalTransfer(int64_t target_id) {
+  const int row = IndexOf(target_id);
+  if (row < 0 || !transfers_[row].transfer.has_value() ||
+      !transfers_[row].transfer->is_final_status()) {
+    return;
+  }
+  beginRemoveRows(QModelIndex(), row, row);
+  transfers_.erase(transfers_.begin() + row);
+  endRemoveRows();
 }
 
 int ShareTransferModel::IndexOf(int64_t target_id) const {
@@ -384,9 +432,20 @@ Backend::Backend(QObject* parent)
 
   service_->GetSettings()->SetDataUsage(
       nearby::sharing::proto::WIFI_ONLY_DATA_USAGE);
+  auto* settings = service_->GetSettings();
+  device_name_ = ToQString(settings->GetDeviceName());
+  if (device_name_.isEmpty()) {
+    device_name_ = hostname();
+  }
+  download_path_ = ToQString(settings->GetCustomSavePath());
+  visible_to_everyone_ = settings->GetVisibility() !=
+                         nearby::sharing::proto::DEVICE_VISIBILITY_HIDDEN;
+  requested_visible_to_everyone_ = visible_to_everyone_;
   QPointer<Backend> backend(this);
   service_->SetVisibility(
-      nearby::sharing::proto::DEVICE_VISIBILITY_EVERYONE, absl::ZeroDuration(),
+      visible_to_everyone_ ? nearby::sharing::proto::DEVICE_VISIBILITY_EVERYONE
+                           : nearby::sharing::proto::DEVICE_VISIBILITY_HIDDEN,
+      absl::ZeroDuration(),
       [backend](NearbySharingService::StatusCodes status) mutable {
         if (!backend) {
           return;
@@ -398,8 +457,12 @@ Backend::Backend(QObject* parent)
           backend->initialized_ =
               status == NearbySharingService::StatusCodes::kOk;
           backend->ReportStatus(QStringLiteral("Initialize"), status);
-          if (backend->initialized_) {
-            backend->StartFastInitiationMonitoring();
+          if (backend->initialized_ && backend->visible_to_everyone_) {
+            // Keep the receive surface active while the app is on its home
+            // screen. Some Android devices stop emitting Fast Initiation
+            // beacons while their Wi-Fi hotspot is enabled, which otherwise
+            // makes this device impossible to discover.
+            backend->startReceive();
           } else {
             backend->desired_mode_ = Mode::kNone;
           }
@@ -434,10 +497,21 @@ QString Backend::hostname() const {
 }
 
 void Backend::startReceive() {
-  if (service_ == nullptr || shutting_down_) {
+  if (service_ == nullptr || shutting_down_ || !visible_to_everyone_) {
     return;
   }
-  StartFastInitiationMonitoring();
+  monitoring_requested_ = false;
+  fallback_receive_used_ = false;
+  fallback_receive_window_ = false;
+  sender_present_ = false;
+  receive_trigger_armed_ = true;
+  receive_window_pending_ = false;
+  receive_offer_received_ = false;
+  receive_timeout_timer_.stop();
+  if (fast_init_manager_->IsScanning()) {
+    fast_init_manager_->StopScanning(nullptr);
+  }
+  SetDesiredMode(Mode::kReceive);
 }
 
 void Backend::startDiscovery() {
@@ -449,19 +523,36 @@ void Backend::startDiscovery() {
   receive_window_pending_ = false;
   receive_offer_received_ = false;
   fallback_receive_window_ = false;
+  targets_.Clear();
   StopFastInitiationScanningForDiscovery();
 }
 
 bool Backend::sendFile(qint64 share_target_id, const QString& path) {
+  return sendFiles(share_target_id, QStringList{path});
+}
+
+bool Backend::sendFiles(qint64 share_target_id, const QStringList& paths) {
   if (service_ == nullptr || shutting_down_) {
     return false;
   }
-  const QString local_path = NormalizeLocalPath(path);
-  const std::string native_path = local_path.toStdString();
-  std::error_code error;
-  if (!std::filesystem::is_regular_file(native_path, error)) {
-    qWarning() << "Send file failed: path is not a regular file" << local_path;
+  if (paths.isEmpty()) {
     return false;
+  }
+  std::vector<std::string> native_paths;
+  native_paths.reserve(paths.size());
+  QString first_path;
+  for (const QString& path : paths) {
+    const QString local_path = NormalizeLocalPath(path);
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(local_path.toStdString(), error)) {
+      qWarning() << "Send files failed: path is not a regular file"
+                 << local_path;
+      return false;
+    }
+    if (first_path.isEmpty()) {
+      first_path = local_path;
+    }
+    native_paths.push_back(local_path.toStdString());
   }
   const auto target = targets_.FindTarget(share_target_id);
   if (!target.has_value()) {
@@ -469,10 +560,10 @@ bool Backend::sendFile(qint64 share_target_id, const QString& path) {
     return false;
   }
 
-  transfers_.PrepareOutgoingTransfer(share_target_id, local_path, target);
+  transfers_.PrepareOutgoingTransfer(share_target_id, first_path, target);
   QPointer<Backend> backend(this);
   service_->SendAttachments(
-      share_target_id, CreateFileAttachments(native_path),
+      share_target_id, CreateFileAttachments(native_paths),
       [backend, share_target_id](NearbySharingService::StatusCodes status) {
         if (!backend) {
           return;
@@ -483,11 +574,125 @@ bool Backend::sendFile(qint64 share_target_id, const QString& path) {
           }
           backend->ReportStatus(QStringLiteral("Send file"), status);
           if (status != NearbySharingService::StatusCodes::kOk) {
+            backend->transfers_.MarkOutgoingTransferFailed(share_target_id);
+            backend->finished_transfer_ids_.insert(share_target_id);
             emit backend->outgoingTransferStartFailed(share_target_id);
           }
         });
       });
   return true;
+}
+
+void Backend::clearTransfer(qint64 share_target_id) {
+  transfers_.RemoveFinalTransfer(share_target_id);
+  finished_transfer_ids_.remove(share_target_id);
+}
+
+void Backend::setDeviceName(const QString& name) {
+  if (service_ == nullptr || shutting_down_ || name.trimmed().isEmpty()) {
+    emit settingChangeFailed(QStringLiteral("deviceName"),
+                             QStringLiteral("Enter a valid device name."));
+    return;
+  }
+  const QString requested_name = name.trimmed();
+  QPointer<Backend> backend(this);
+  service_->GetSettings()->SetDeviceName(
+      requested_name.toStdString(),
+      [backend,
+       requested_name](nearby::sharing::DeviceNameValidationResult result) {
+        PostStatus(backend, [backend, requested_name, result]() {
+          if (!backend || backend->shutting_down_) {
+            return;
+          }
+          if (result != nearby::sharing::DeviceNameValidationResult::kValid) {
+            emit backend->settingChangeFailed(
+                QStringLiteral("deviceName"),
+                QStringLiteral(
+                    "The device name is empty, too long, or invalid."));
+            return;
+          }
+          backend->device_name_ = requested_name;
+          emit backend->deviceNameChanged();
+        });
+      });
+}
+
+void Backend::setDownloadPath(const QString& path) {
+  if (service_ == nullptr || shutting_down_) {
+    return;
+  }
+  const QString local_path = NormalizeLocalPath(path);
+  std::error_code error;
+  if (!std::filesystem::is_directory(local_path.toStdString(), error)) {
+    emit settingChangeFailed(QStringLiteral("downloadPath"),
+                             QStringLiteral("Select an existing folder."));
+    return;
+  }
+  QPointer<Backend> backend(this);
+  service_->GetSettings()->SetCustomSavePathAsync(
+      local_path.toStdString(), [backend, local_path]() {
+        PostStatus(backend, [backend, local_path]() {
+          if (!backend || backend->shutting_down_) {
+            return;
+          }
+          backend->download_path_ = local_path;
+          emit backend->downloadPathChanged();
+        });
+      });
+}
+
+void Backend::setVisibleToEveryone(bool visible) {
+  if (service_ == nullptr || shutting_down_ ||
+      visible == requested_visible_to_everyone_) {
+    return;
+  }
+  requested_visible_to_everyone_ = visible;
+  if (!visible) {
+    receive_timeout_timer_.stop();
+    SetDesiredMode(Mode::kNone);
+  }
+  ApplyVisibilityRequest();
+}
+
+void Backend::ApplyVisibilityRequest() {
+  if (service_ == nullptr || shutting_down_ ||
+      visibility_operation_in_flight_ ||
+      requested_visible_to_everyone_ == visible_to_everyone_) {
+    return;
+  }
+  visibility_operation_in_flight_ = true;
+  const bool requested_visibility = requested_visible_to_everyone_;
+  QPointer<Backend> backend(this);
+  service_->SetVisibility(
+      requested_visibility ? nearby::sharing::proto::DEVICE_VISIBILITY_EVERYONE
+                           : nearby::sharing::proto::DEVICE_VISIBILITY_HIDDEN,
+      absl::ZeroDuration(),
+      [backend,
+       requested_visibility](NearbySharingService::StatusCodes status) mutable {
+        PostStatus(backend, [backend, requested_visibility, status]() {
+          if (!backend || backend->shutting_down_) {
+            return;
+          }
+          backend->visibility_operation_in_flight_ = false;
+          if (status != NearbySharingService::StatusCodes::kOk) {
+            emit backend->settingChangeFailed(
+                QStringLiteral("visibility"),
+                QStringLiteral("Could not change visibility."));
+            backend->requested_visible_to_everyone_ =
+                backend->visible_to_everyone_;
+            if (backend->visible_to_everyone_) {
+              backend->startReceive();
+            }
+            return;
+          }
+          backend->visible_to_everyone_ = requested_visibility;
+          emit backend->visibleToEveryoneChanged();
+          if (requested_visibility && backend->requested_visible_to_everyone_) {
+            backend->startReceive();
+          }
+          backend->ApplyVisibilityRequest();
+        });
+      });
 }
 
 void Backend::accept(qint64 share_target_id) {
@@ -568,15 +773,21 @@ void Backend::OnTransferUpdate(
     const TransferMetadata& transfer) {
   const int64_t total_bytes = attachments.GetTotalAttachmentsSize();
   const int attachment_count = attachments.GetAttachmentCount();
+  const QString attachment_path = AttachmentPath(attachments);
   QPointer<Backend> backend(this);
   PostStatus(this, [backend, receive_mode, target, transfer, total_bytes,
-                    attachment_count]() {
+                    attachment_count, attachment_path]() {
     if (!backend || backend->shutting_down_) {
       return;
     }
-    backend->targets_.ApplyTarget(target);
+    // Incoming transfer targets are not valid send destinations. Keeping one
+    // in the discovery model lets the UI select an id for which the sharing
+    // service has no outgoing session, resulting in kInvalidArgument.
+    if (!receive_mode) {
+      backend->targets_.ApplyTarget(target);
+    }
     backend->transfers_.ApplyTransfer(receive_mode, target, transfer,
-                                      total_bytes);
+                                      total_bytes, attachment_path);
     if (!transfer.is_final_status()) {
       backend->finished_transfer_ids_.remove(target.id);
     }
@@ -601,8 +812,8 @@ void Backend::OnTransferUpdate(
       emit backend->transferFinished(
           target.id, receive_mode, ToQString(target.device_name),
           ToQString(TransferMetadata::StatusToString(transfer.status())));
-      if (receive_mode) {
-        backend->StartFastInitiationMonitoring();
+      if (receive_mode && backend->visible_to_everyone_) {
+        backend->startReceive();
       }
     }
   });
@@ -701,11 +912,13 @@ void Backend::DriveMode() {
     return;
   }
   if (mode == Mode::kDiscovery) {
+    const nearby::linux::WifiMediumPolicy wifi_policy =
+        nearby::linux::GetWifiMediumPolicy();
     service_->RegisterSendSurface(
         &send_transfer_callback_, this,
         NearbySharingService::SendSurfaceState::kForeground,
         nearby::sharing::Advertisement::BlockedVendorId::kNone,
-        /*disable_wifi_hotspot=*/false,
+        /*disable_wifi_hotspot=*/!wifi_policy.wifi_hotspot,
         [backend, mode](NearbySharingService::StatusCodes status) mutable {
           if (backend) {
             PostStatus(backend, [backend, mode, status]() {
@@ -856,9 +1069,14 @@ void Backend::OnFastInitiationScanningStoppedForDiscovery() {
   fast_init_scan_stop_in_flight_ = false;
   sender_present_ = false;
   receive_trigger_armed_ = true;
-  if (!shutting_down_ && !monitoring_requested_) {
+  // The user may return to the receive screen while the asynchronous scan
+  // stop is still completing. Do not let that stale callback switch the app
+  // back into discovery mode.
+  if (!shutting_down_ && !monitoring_requested_ &&
+      desired_mode_ != Mode::kReceive) {
     SetDesiredMode(Mode::kDiscovery);
   } else {
+    DriveMode();
     MaybeStartFastInitiationScanning();
   }
 }

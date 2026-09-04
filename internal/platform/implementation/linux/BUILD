@@ -188,6 +188,12 @@ cc_library(
 )
 
 cc_library(
+    name = "network_safety",
+    hdrs = ["network_safety.h"],
+    visibility = ["//visibility:public"],
+)
+
+cc_library(
     name = "linux",
     srcs = [
         "avahi.cc",
@@ -248,6 +254,7 @@ cc_library(
     deps = [
         ":comm",
         ":crypto",  # build_cleaner: keep
+        ":network_safety",
         ":system_clock",
         ":types",
         "//connections/implementation/flags:connections_flags",

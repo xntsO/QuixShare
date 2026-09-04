@@ -1,18 +1,18 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import QtQuick.Shapes
+import "."
 
 Rectangle {
     id: root
-    color: "#DCF5FF"
+    color: AppSettings.surface
     Layout.fillWidth: true
     Layout.fillHeight: true
 
     property var shareTargetId: 0
     property string direction: "receive"
     property string filename: "ThisIsAnImage.jpg"
-    property string targetname: "Lasan's A55"
+    property string targetname: "Nearby device"
     property bool transferring: !awaitingLocalConfirmation
     property real progressValue: 0.64
     property string status: "kUnknown"
@@ -22,16 +22,58 @@ Rectangle {
     property int transferredAttachmentsCount: 0
     property var totalBytes: 0
     property var transferredBytes: 0
+    property bool resolutionRequested: false
+    property bool cancelRequested: false
+    readonly property bool compact: width < 500 || height < 440
 
     signal returnHomeRequested()
+
+    function resolveOffer(acceptOffer) {
+        if (resolutionRequested)
+            return
+        resolutionRequested = true
+        responseTimeout.restart()
+        if (acceptOffer)
+            backend.accept(shareTargetId)
+        else
+            backend.reject(shareTargetId)
+    }
+
+    Timer {
+        id: responseTimeout
+        interval: 8000
+        onTriggered: {
+            if (root.awaitingLocalConfirmation)
+                root.resolutionRequested = false
+        }
+    }
+
+    onAwaitingLocalConfirmationChanged: {
+        if (awaitingLocalConfirmation) {
+            resolutionRequested = false
+        } else {
+            responseTimeout.stop()
+        }
+    }
+
+    onIsFinalStatusChanged: {
+        if (isFinalStatus) {
+            cancelTimeout.stop()
+            cancelRequested = false
+        }
+    }
+
+    Timer {
+        id: cancelTimeout
+        interval: 8000
+        onTriggered: root.cancelRequested = false
+    }
 
     function baseName(path) {
         if (!path || path.length === 0) {
             return direction === "send" ? "Selected file" : transferSummary()
         }
-        const normalized = decodeURIComponent(path).replace("file://", "")
-        const parts = normalized.split("/")
-        return parts.length === 0 ? normalized : parts[parts.length - 1]
+        return AppSettings.baseName(path)
     }
 
     function transferSummary() {
@@ -96,8 +138,9 @@ Rectangle {
     TransferCard {
         visible: root.transferring
         anchors.centerIn: parent
-        width: Math.min(parent.width * 0.9, 700)
-        height: 212
+        width: Math.min(parent.width - (root.compact ? 24 : 48), 700)
+        height: Math.min(root.compact ? 176 : 212, parent.height - 24)
+        compact: root.compact
         shareTargetId: root.shareTargetId
         direction: root.direction
         filename: root.filename
@@ -108,36 +151,44 @@ Rectangle {
         totalBytes: root.totalBytes
         totalAttachmentsCount: root.totalAttachmentsCount
         transferredAttachmentsCount: root.transferredAttachmentsCount
+        cancelEnabled: !root.cancelRequested
         finalActionText: root.isFinalStatus ? "Go back home" : ""
-        onCancelRequested: backend.cancel(root.shareTargetId)
-        onFinalActionRequested: root.returnHomeRequested()
+        onCancelRequested: {
+            root.cancelRequested = true
+            cancelTimeout.restart()
+            backend.cancel(root.shareTargetId)
+        }
+        onFinalActionRequested: {
+            backend.clearTransfer(root.shareTargetId)
+            root.returnHomeRequested()
+        }
     }
 
     Item {
         visible: !root.transferring
         anchors.centerIn: parent
-        width: Math.min(parent.width * 0.85, 360)
-        height: 460
+        width: Math.min(parent.width - (root.compact ? 24 : 48), 360)
+        height: Math.min(root.compact ? 360 : 460, parent.height - 24)
 
         Rectangle {
             id: cardBackground
             anchors.fill: parent
             radius: 24
-            color: "#FFFFFF"
-            border.color: "#BCE5F5"
+            color: AppSettings.surfaceContainer
+            border.color: AppSettings.outline
             border.width: 1
         }
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.margins: 28
-            spacing: 16
+            anchors.margins: root.compact ? 18 : 28
+            spacing: root.compact ? 10 : 16
 
             Text {
                 Layout.fillWidth: true
-                font.pointSize: 18
+                font.pointSize: root.compact ? 16 : 18
                 font.weight: 700
-                color: "#377B95"
+                color: AppSettings.primary
                 text: root.direction === "send" ? "Outgoing share" : "Incoming share"
                 horizontalAlignment: Text.AlignHCenter
             }
@@ -155,7 +206,7 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                color: "#57707A"
+                color: AppSettings.mutedText
                 font.pointSize: 11
                 wrapMode: Text.WrapAnywhere
                 text: root.baseName(root.filename)
@@ -166,8 +217,8 @@ Rectangle {
 
             Text {
                 Layout.fillWidth: true
-                color: "#57707A"
-                font.pointSize: 15
+                color: AppSettings.text
+                font.pointSize: root.compact ? 13 : 15
                 font.weight: 700
                 wrapMode: Text.WrapAnywhere
                 text: root.targetname
@@ -180,8 +231,9 @@ Rectangle {
                 Button {
                     id: cancelbutton
                     Layout.fillWidth: true
-                    text: "Reject"
-                    onClicked: backend.reject(root.shareTargetId)
+                    enabled: !root.resolutionRequested
+                    text: root.resolutionRequested ? "Responding…" : "Reject"
+                    onClicked: root.resolveOffer(false)
 
                     contentItem: Text {
                         text: cancelbutton.text
@@ -195,8 +247,8 @@ Rectangle {
                     background: Rectangle {
                         implicitHeight: 46
                         radius: 12
-                        color: cancelbutton.hovered ? "#db1e1e" : "#6EA7B6"
-                        border.color: "#91C8DE"
+                        color: cancelbutton.hovered ? "#B62828" : "#D94C4C"
+                        border.color: "transparent"
                         border.width: 1
                     }
                 }
@@ -204,14 +256,15 @@ Rectangle {
                 Button {
                     id: acceptButton
                     Layout.fillWidth: true
-                    text: "Accept"
-                    onClicked: backend.accept(root.shareTargetId)
+                    enabled: !root.resolutionRequested
+                    text: root.resolutionRequested ? "Responding…" : "Accept"
+                    onClicked: root.resolveOffer(true)
 
                     contentItem: Text {
                         text: acceptButton.text
                         font.pointSize: 14
                         font.weight: 600
-                        color: "white"
+                        color: AppSettings.onPrimaryContainer
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -219,8 +272,8 @@ Rectangle {
                     background: Rectangle {
                         implicitHeight: 46
                         radius: 12
-                        color: acceptButton.hovered ? "#195871" : "#06384C"
-                        border.color: "#91C8DE"
+                        color: AppSettings.primaryContainer
+                        border.color: AppSettings.primary
                         border.width: 1
                     }
                 }

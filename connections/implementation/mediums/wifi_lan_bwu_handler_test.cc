@@ -309,7 +309,9 @@ TEST_F(WifiLanBwuHandlerTest, InitializeUpgradedMediumForEndpoint_Success) {
   EXPECT_CALL(*wifi_lan_server_socket, GetPort()).WillRepeatedly(Return(8080));
   EXPECT_CALL(*wifi_lan_medium, IsNetworkConnected())
       .WillRepeatedly(Return(true));
-  EXPECT_CALL(*wifi_lan_medium, ListenForService(_))
+  EXPECT_CALL(*wifi_lan_medium, GetDynamicPortRange())
+      .WillOnce(Return(std::make_pair(53317, 53317)));
+  EXPECT_CALL(*wifi_lan_medium, ListenForService(53317))
       .WillOnce(Return(ByMove(std::move(wifi_lan_server_socket))));
   EXPECT_CALL(*wifi_lan_medium, GetUpgradeAddressCandidates(_))
       .WillOnce(Return(api::UpgradeAddressInfo{

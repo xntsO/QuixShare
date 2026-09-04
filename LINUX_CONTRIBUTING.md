@@ -6,7 +6,8 @@ For general project contribution rules, see `CONTRIBUTING.md`.
 
 ## Recommended development environment
 
-The fastest path to a consistent Linux development setup is to use the devcontainer at `.devcontainers/bazelclion` with CLion and Bazel.
+The fastest path to a consistent Linux development setup is to use the
+devcontainer at `.devcontainer/bazelclion` with CLion and Bazel.
 
 Notes:
 
@@ -88,8 +89,8 @@ The example application for Nearby Sharing is located at:
 
 Example applications for Nearby Connections are located at:
 
-- Walkie-talkie: `nearby/connection/walkietalkie`
-- File share: `nearby/connections/file_share`
+- Walkie-talkie: `connections/walkietalkie`
+- File share: `connections/file_share`
 
 ## CLion project visibility
 

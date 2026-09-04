@@ -1,136 +1,149 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
-import QtQuick.Shapes
+import QtQuick.Layouts
 import "."
 
 Rectangle {
-    id: sidebar
+    id: root
     Layout.fillHeight: true
-    Layout.preferredWidth: 300
+    Layout.preferredWidth: compact ? 188 : 260
+    color: AppSettings.navigation
 
-    property string pendingPath: ""
+    property bool compact: false
+    property var pendingFiles: []
     property bool cancelEnabled: true
 
-    color: "#CBF0FF"
-
     ColumnLayout {
-        anchors.margins: 20
         anchors.fill: parent
+        anchors.margins: root.compact ? 14 : 18
+        spacing: root.compact ? 10 : 14
 
-        Rectangle {
-            Layout.preferredHeight: innerColumn.implicitHeight + 20
+        Text {
+            text: "Visibility"
+            color: AppSettings.mutedText
+            font.pixelSize: 13
+        }
+
+        Button {
+            id: visibilityButton
             Layout.fillWidth: true
-            color: "transparent"
-
-            ColumnLayout {
-                id: innerColumn
+            text: backend.visibleToEveryone ? "Always visible" : "Hidden"
+            onClicked: backend.setVisibleToEveryone(!backend.visibleToEveryone)
+            contentItem: RowLayout {
                 Text {
-                    text: "Device name"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                    text: visibilityButton.text
+                    color: AppSettings.text
+                    font.weight: 600
+                    Layout.fillWidth: true
                 }
-
                 Text {
-                    text: backend.hostname
-                    font.weight: 500
-                    font.pointSize: 17
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
+                    text: backend.visibleToEveryone ? "›" : "‹"
+                    color: AppSettings.primary
+                    font.pixelSize: 24
                 }
+            }
+            background: Rectangle {
+                implicitHeight: 48
+                radius: 14
+                color: visibilityButton.hovered ? AppSettings.surfaceHigh
+                                                : AppSettings.surfaceContainer
             }
         }
 
+        Text {
+            Layout.fillWidth: true
+            text: backend.visibleToEveryone
+                  ? "Nearby devices can find " + backend.deviceName
+                    + ". Every incoming transfer still needs your approval."
+                  : "Your laptop is not advertising for incoming shares. Sending remains available."
+            color: AppSettings.mutedText
+            wrapMode: Text.WordWrap
+            font.pixelSize: 12
+            lineHeight: 1.25
+        }
+
         Rectangle {
+            visible: root.pendingFiles.length > 0
             Layout.fillWidth: true
             Layout.fillHeight: true
-            color: "transparent"
+            radius: 18
+            color: AppSettings.surfaceContainer
+            border.color: AppSettings.outline
 
-            ColumnLayout {
-                anchors.top: parent.top
-                anchors.left: parent.left
-                anchors.right: parent.right
-
-                //anchors.fill: parent
-
-                Text {
-                    text: "Visible to Everyone"
-                    font.weight: 700
-                    color: "#377B95"
-                }
-
-                Text {
-                    Layout.preferredWidth: parent.width
-                    wrapMode: Text.WordWrap
-                    text: "This cannot be changed due to limitations in QuickShare on Linux"
-                    color: "gray"
-                }
-            }
-        }
-
-        Rectangle {
-            visible: pendingPath.length != 0
-            Layout.preferredHeight: 350
-            Layout.fillWidth: true
-            border.color: "#91C8DE"
-            border.width: 2
-            radius: 20
-            color: "#DCF5FF"
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 15
+                anchors.margins: root.compact ? 10 : 14
+                spacing: root.compact ? 7 : 10
 
                 Text {
-                    Layout.fillWidth: true
-                    font.pointSize: 15
-
-                    font.weight: 700
-                    color: "#377B95"
-                    text: "Sharing"
+                    text: root.pendingFiles.length === 1
+                          ? "Sharing 1 file"
+                          : "Sharing " + root.pendingFiles.length + " files"
+                    color: AppSettings.text
+                    font.pixelSize: 16
+                    font.weight: 600
                 }
-                Image {
-                    source: "qrc:icons/file.svg"
+
+                Rectangle {
+                    visible: root.height >= 390
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.preferredWidth: root.compact ? 64 : 82
+                    Layout.preferredHeight: root.compact ? 64 : 82
+                    radius: 20
+                    color: AppSettings.surfaceHigh
+                    Image {
+                        anchors.centerIn: parent
+                        width: root.compact ? 42 : 54
+                        height: width
+                        source: "qrc:/icons/file.svg"
+                        fillMode: Image.PreserveAspectFit
+                    }
+                }
+
+                ListView {
+                    Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.fillWidth: true
-                    fillMode: Image.PreserveAspectCrop
-                    sourceSize.height: height
-                    sourceSize.width: width
-                    smooth: true
-                    antialiasing: true
+                    model: root.pendingFiles
+                    clip: true
+                    spacing: 4
+                    delegate: Text {
+                        required property var modelData
+                        width: ListView.view.width
+                        text: AppSettings.baseName(modelData)
+                        color: AppSettings.mutedText
+                        font.pixelSize: 11
+                        elide: Text.ElideMiddle
+                    }
                 }
 
-                Text {
-                    Layout.fillWidth: true
-                    color: "gray"
-                    wrapMode: Text.WordWrap
-                    text: decodeURIComponent(pendingPath).replace("file://", "")
-                    horizontalAlignment: Text.AlignHCenter
-                }
                 Button {
-                    id: cancelbutton
+                    id: cancelButton
                     Layout.fillWidth: true
+                    enabled: root.cancelEnabled
                     text: "Cancel"
-                    enabled: sidebar.cancelEnabled
-                    opacity: enabled ? 1 : 0.55
                     onClicked: EventBus.cancelPendingShareRequested()
                     contentItem: Text {
-                        text: cancelbutton.text
-                        font.pointSize: 14
-                        font.weight: 500
-                        color: "white" // Dims text when pressed
+                        text: cancelButton.text
+                        color: AppSettings.text
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
+                        font.weight: 600
                     }
                     background: Rectangle {
-                        implicitWidth: 100
-                        implicitHeight: 40
-                        radius: 10
-                        color: cancelbutton.hovered ? "#195871" : "#06384C"
-                        border.color: "#91C8DE"
-                        border.width: 2
+                        implicitHeight: 42
+                        radius: 13
+                        color: cancelButton.hovered ? AppSettings.surfaceHigh
+                                                    : AppSettings.surface
+                        border.color: AppSettings.outline
                     }
                 }
             }
         }
+
+        Item {
+            visible: root.pendingFiles.length === 0
+            Layout.fillHeight: true
+        }
+
     }
 }

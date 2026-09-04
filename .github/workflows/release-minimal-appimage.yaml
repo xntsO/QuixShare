@@ -1,4 +1,4 @@
-name: Release QuickShare AppImage
+name: Release QuixShare AppImage
 
 on:
   push:
@@ -13,6 +13,8 @@ on:
 
 env:
   FORCE_COLOR: true
+  CC: /usr/bin/clang-21
+  CXX: /usr/bin/clang++-21
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 permissions:
@@ -20,7 +22,7 @@ permissions:
 
 jobs:
   build-and-release-appimage:
-    name: Build and Release QuickShare AppImage
+    name: Build and Release QuixShare AppImage
     runs-on: ubuntu-24.04
 
     steps:
@@ -33,17 +35,21 @@ jobs:
           fi
 
       - name: Checkout release tag
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
           submodules: recursive
+          persist-credentials: false
 
       - name: Set up Bazelisk
-        uses: bazel-contrib/setup-bazel@0.18.0
+        uses: bazel-contrib/setup-bazel@083175551ceeceebc757ebee2127fde78840ca77 # 0.18.0
         with:
           bazelisk-cache: true
           disk-cache: ${{ github.workflow }}
           repository-cache: true
+
+      - name: Check release hygiene
+        run: ./util/check_release_hygiene.sh
 
       - name: Install Linux build dependencies
         run: |
@@ -86,7 +92,8 @@ jobs:
             --@com_google_protobuf//bazel/toolchains:prefer_prebuilt_protoc=true \
             --copt='-DGITHUB_BUILD' \
             //sharing/linux/app:application_controller_test \
-            //sharing/linux/app:backend_test
+            //sharing/linux/app:backend_test \
+            //sharing/linux/app:native_file_logging_test
 
       - name: Build minimal AppImage inputs
         run: |
@@ -101,23 +108,23 @@ jobs:
       - name: Generate SHA256 checksum
         working-directory: sharing/linux/dist-minimal
         run: |
-          sha256sum QuickShare-x86_64.AppImage \
-            > QuickShare-x86_64.AppImage.sha256
-          sha256sum --check QuickShare-x86_64.AppImage.sha256
+          sha256sum QuixShare-x86_64.AppImage \
+            > QuixShare-x86_64.AppImage.sha256
+          sha256sum --check QuixShare-x86_64.AppImage.sha256
 
       - name: Validate AppImage output
         run: |
-          test -x sharing/linux/dist-minimal/QuickShare-x86_64.AppImage
-          test -x sharing/linux/dist-minimal/QuickShare.AppDir/AppRun
-          test -e sharing/linux/dist-minimal/QuickShare.AppDir/usr/lib/libQt6DBus.so.6
+          test -x sharing/linux/dist-minimal/QuixShare-x86_64.AppImage
+          test -x sharing/linux/dist-minimal/QuixShare.AppDir/AppRun
+          test -e sharing/linux/dist-minimal/QuixShare.AppDir/usr/lib/libQt6DBus.so.6
           test -s sharing/linux/dist-minimal/qml-smoke-test.log
-          file sharing/linux/dist-minimal/QuickShare-x86_64.AppImage
+          file sharing/linux/dist-minimal/QuixShare-x86_64.AppImage
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
           files: |
-            sharing/linux/dist-minimal/QuickShare-x86_64.AppImage
-            sharing/linux/dist-minimal/QuickShare-x86_64.AppImage.sha256
+            sharing/linux/dist-minimal/QuixShare-x86_64.AppImage
+            sharing/linux/dist-minimal/QuixShare-x86_64.AppImage.sha256

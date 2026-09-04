@@ -10,4 +10,9 @@ export QML2_IMPORT_PATH="$HERE/usr/lib/qt6/qml"
 export QML_IMPORT_PATH="$HERE/usr/lib/qt6/qml"
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-wayland;xcb}"
 
-exec "$HERE/usr/bin/quickshare" "$@"
+# This user-facing build promises not to replace or reconfigure the active
+# Wi-Fi connection. Keep the developer-only transport opt-in out of the
+# packaged process even if it is present in the caller's environment.
+unset QUIXSHARE_ALLOW_WIFI_RECONFIGURATION
+
+exec "$HERE/usr/bin/quixshare" "$@"

@@ -33,6 +33,7 @@
 #include "connections/implementation/flags/nearby_connections_feature_flags.h"
 #include "internal/base/file_path.h"
 #include "internal/flags/nearby_flags.h"
+#include "internal/platform/implementation/linux/network_safety.h"
 #include "sharing/advertisement.h"
 #include "sharing/attachment_container.h"
 #include "sharing/common/nearby_share_enums.h"
@@ -320,11 +321,14 @@ class CliApp {
     CliDiscoveryCallback discovery_callback(state);
 
     auto status = WaitForStatus([&](auto callback) {
+      const nearby::linux::WifiMediumPolicy wifi_policy =
+          nearby::linux::GetWifiMediumPolicy();
       service_->RegisterSendSurface(
           &transfer_callback, &discovery_callback,
           NearbySharingService::SendSurfaceState::kForeground,
           Advertisement::BlockedVendorId::kNone,
-          /*disable_wifi_hotspot=*/false, std::move(callback));
+          /*disable_wifi_hotspot=*/!wifi_policy.wifi_hotspot,
+          std::move(callback));
     });
     std::cout << "RegisterSendSurface: " << StatusCodeToString(status)
               << std::endl;
@@ -432,6 +436,12 @@ class CliApp {
 int main(int argc, char** argv) {
   signal(SIGINT, nearby::sharing::linux::HandleSignal);
   signal(SIGTERM, nearby::sharing::linux::HandleSignal);
+  const nearby::linux::WifiMediumPolicy wifi_policy =
+      nearby::linux::GetWifiMediumPolicy();
+  nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
+      nearby::sharing::config_package_nearby::nearby_sharing_feature::
+          kEnableMediumWifiLan,
+      wifi_policy.wifi_lan);
   nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
       nearby::sharing::config_package_nearby::nearby_sharing_feature::
           kEnableBleForTransfer,
@@ -447,11 +457,11 @@ int main(int argc, char** argv) {
   nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
       nearby::connections::config_package_nearby::nearby_connections_feature::
           kEnableWifiDirect,
-      true);
+      wifi_policy.wifi_direct);
   nearby::NearbyFlags::GetInstance().OverrideBoolFlagValue(
       nearby::connections::config_package_nearby::nearby_connections_feature::
           kEnableWifiDirectGcOnly,
-      true);
+      wifi_policy.wifi_direct);
 
   std::optional<nearby::sharing::linux::Options> options =
       nearby::sharing::linux::ParseArgs(argc, argv);

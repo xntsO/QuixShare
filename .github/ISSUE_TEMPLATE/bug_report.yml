@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Modified for the independent Linux desktop project.
+
 name: 🐛 Bug Report
 description: Report a reproducible bug or regression.
 labels:
@@ -22,40 +24,37 @@ body:
   - type: dropdown
     attributes:
       label: Project
-      description: Which project are you using?
+      description: Which part of the repository is affected?
       options:
-        - Nearby Connections
-        - Fast Pair
-        - Nearby Presence
-        - Nearby for Embedded Systems
+        - Linux desktop application
+        - Linux Bluetooth or BLE transport
+        - Linux local-network transport
+        - Packaging or installation
+        - Upstream Nearby library
         - Other
     validations:
       required: true
 
-  - type: dropdown
+  - type: input
     attributes:
-      label: Language
-      description: Which client library are you using?
-      options:
-        - Swift
-        - C
-        - C++
-        - Dart
-        - Other
+      label: Application version
+      description: Release tag, AppImage filename, or commit hash.
     validations:
       required: true
 
-  - type: dropdown
+  - type: input
     attributes:
-      label: OS Platform
-      description: Which operating system are you trying to use Nearby on?
-      options:
-        - Windows
-        - Linux
-        - Apple
-        - Other
+      label: Linux environment
+      description: Distribution/version, kernel, desktop, and Wayland or X11.
+      placeholder: Ubuntu 24.04, kernel 6.8, GNOME 46, Wayland
     validations:
       required: true
+
+  - type: input
+    attributes:
+      label: Hardware and peer device
+      description: Bluetooth/Wi-Fi adapters and the sending or receiving device.
+      placeholder: Intel AX211; Android device and OS version
 
   - type: textarea
     attributes:
@@ -76,9 +75,9 @@ body:
       label: How can we reproduce it (as minimally and precisely as possible)?
       placeholder: |
         Example bug report:
-        1. Start discovery on MacBook Air
-        2. Start advertising on Pixel 7 Pro
-        3. Attempt to connect to discovered Pixel
+        1. Open the Linux application and enable receiving.
+        2. Select the Linux device from the peer device.
+        3. Accept the transfer and observe the failure.
     validations:
       required: true
 
@@ -104,7 +103,7 @@ body:
     id: logs
     attributes:
       label: Relevant log output
-      description: Please copy and paste any relevant log output. This will be automatically formatted into code, so no need for backticks.
+      description: Remove device names, addresses, file names, and other private data before pasting. This field is formatted as code.
       render: shell
 
   - type: textarea

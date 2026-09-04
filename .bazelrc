@@ -1,8 +1,8 @@
 build --action_env=BAZEL_CXXOPTS=-"std=c++20" --repo_env=BAZEL_CONLYOPTS="-std=gnu17"
-build --action_env=CC=/usr/bin/clang-21
-build --action_env=CXX=/usr/bin/clang++-21
-build --repo_env=CC=/usr/bin/clang-21
-build --repo_env=CXX=/usr/bin/clang++-21
+build --action_env=CC
+build --action_env=CXX
+build --repo_env=CC
+build --repo_env=CXX
 build --check_visibility=false --spawn_strategy=standalone --verbose_failures
 build --cxxopt=-std=c++20
 build --cxxopt='-fvisibility-inlines-hidden'

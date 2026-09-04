@@ -1,24 +1,28 @@
 import QtQuick
 import QtQuick.Window
+import "."
 
 Window {
     id: root
-    width: 640
-    height: 480
+    width: 920
+    height: 640
+    minimumWidth: 560
+    minimumHeight: 400
     visible: true
-    title: qsTr("QuickShare")
-    color: "#DCF5FF"
+    title: qsTr("QuixShare")
+    color: AppSettings.appBackground
+
+    Component.onCompleted: {
+        // Evaluate this once at startup. A tray becoming available later must
+        // never make an already-visible window disappear unexpectedly.
+        root.visible = !AppSettings.startMinimized || !appController.closeToTray
+    }
 
     onClosing: function(close) {
-        if (appController.closeToTray) {
+        if (appController.closeToTray && AppSettings.keepRunningOnClose) {
             close.accepted = false
             root.hide()
         }
-    }
-
-    FontLoader {
-        id: googlesans
-        source: "qrc:/googlesans_var.ttf"
     }
 
     Loader {

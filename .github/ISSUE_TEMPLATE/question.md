@@ -5,6 +5,7 @@ labels: ['needs-triage', 'type: question']
 ---
 
 <!--
-  To improve likelyhood of your questions being answered, try keeping your
-  question clear and concise.
+  To improve the likelihood of an answer, keep the question clear and concise.
+  Include the application version, Linux distribution, desktop session, and
+  relevant hardware. Redact private data from logs before posting them.
 -->

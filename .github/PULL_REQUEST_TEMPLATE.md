@@ -17,3 +17,10 @@
   For example, the commands you ran and their output or screenshots / videos if
   the pull request changes the user interface.
 -->
+
+## Release and provenance checks
+
+- [ ] I ran `git diff --check`.
+- [ ] I ran `./util/check_release_hygiene.sh`.
+- [ ] New dependencies and assets have documented compatible licenses.
+- [ ] Logs and screenshots contain no private device or user data.

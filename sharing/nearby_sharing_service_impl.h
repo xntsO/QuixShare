@@ -287,7 +287,8 @@ class NearbySharingServiceImpl
   void InvalidateScanningState();
   void InvalidateFastInitiationAdvertising();
   void InvalidateAdvertisingState();
-  void StopAdvertising();
+  void StopAdvertising(std::function<void()> completion_callback = nullptr);
+  void FinishShutdown(std::function<void(StatusCodes)> status_codes_callback);
   void StartScanning();
   StatusCodes StopScanning();
   void StopAdvertisingAndInvalidateSurfaceState();

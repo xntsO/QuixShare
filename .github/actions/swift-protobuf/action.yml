@@ -18,11 +18,12 @@ runs:
   using: "composite"
   steps:
   - name: sync protobuf repo
-    uses: actions/checkout@v6
+    uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
     with:
       repository: protocolbuffers/protobuf
-      ref: v33.2
+      ref: 7ccf2060af4cd13c44a8659d0999be6c7a98fcc1 # v33.2
       path: google-protobuf
+      persist-credentials: false
   - name: install protoc
     run: |
       brew install protobuf

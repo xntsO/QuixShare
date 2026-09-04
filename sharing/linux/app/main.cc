@@ -7,7 +7,6 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
-#include <QFontDatabase>
 #include <QIcon>
 #include <QApplication>
 #include <QMetaObject>
@@ -118,10 +117,12 @@ int main(int argc, char* argv[]) {
   std::unique_ptr<nearby::sharing::linux::NativeFileLogging> native_logging =
       nearby::sharing::linux::NativeFileLogging::Initialize();
   QApplication app(argc, argv);
-  app.setApplicationName(QStringLiteral("QuickShare"));
-  app.setOrganizationDomain(QStringLiteral("com.google"));
-  app.setDesktopFileName(QStringLiteral("quickshare"));
-  app.setWindowIcon(QIcon(QStringLiteral(":/icons/quickshare.svg")));
+  app.setApplicationName(QStringLiteral("QuixShare"));
+  app.setOrganizationDomain(QStringLiteral("io.github.xntso"));
+  app.setDesktopFileName(QStringLiteral("io.github.xntso.quixshare"));
+  app.setWindowIcon(QIcon::fromTheme(
+      QStringLiteral("quixshare"),
+      QIcon(QStringLiteral(":/icons/quixshare-taskbar.png"))));
   app.setQuitOnLastWindowClosed(false);
 
   ApplicationController application_controller(app);
@@ -145,17 +146,6 @@ int main(int argc, char* argv[]) {
                        application_controller.AttachWindow(object);
                      }
                    });
-
-  const int fontId = QFontDatabase::addApplicationFont(":/googlesans_var.ttf");
-
-  if (fontId != -1) {
-    const QStringList fontFamilies =
-        QFontDatabase::applicationFontFamilies(fontId);
-    if (!fontFamilies.isEmpty()) {
-      const QFont defaultFont(fontFamilies.at(0));
-      app.setFont(defaultFont);
-    }
-  }
 
   if (IsHotReloadEnabled()) {
     const QDir qml_source_dir = QmlSourceDir();

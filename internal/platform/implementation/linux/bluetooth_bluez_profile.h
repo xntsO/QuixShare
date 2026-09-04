@@ -35,6 +35,7 @@
 
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "internal/platform/implementation/bluetooth_classic.h"
 #include "internal/platform/implementation/linux/bluetooth_devices.h"
 #include "internal/platform/implementation/linux/bluez.h"
@@ -46,30 +47,41 @@ namespace nearby {
 namespace linux {
 class ProfileManager;
 
+namespace profile_internal {
+
+// Waits for a profile event while `mutex` is held. InfiniteDuration preserves
+// the existing cancellation-driven wait; finite durations support recovery
+// from BlueZ reporting a ConnectProfile error just before NewConnection.
+bool AwaitProfileEvent(absl::Mutex* mutex, const absl::Condition& condition,
+                       absl::Duration timeout)
+    ABSL_EXCLUSIVE_LOCKS_REQUIRED(*mutex);
+
+}  // namespace profile_internal
+
 class Profile final
     : public sdbus::AdaptorInterfaces<org::bluez::Profile1_adaptor,
                                       sdbus::ManagedObject_adaptor> {
  public:
-  Profile(const Profile &) = delete;
-  Profile(Profile &&) = delete;
-  Profile &operator=(const Profile &) = delete;
-  Profile &operator=(Profile &&) = delete;
-  Profile(sdbus::IConnection &system_bus, sdbus::ObjectPath profile_object_path,
-          BluetoothDevices &devices)
+  Profile(const Profile&) = delete;
+  Profile(Profile&&) = delete;
+  Profile& operator=(const Profile&) = delete;
+  Profile& operator=(Profile&&) = delete;
+  Profile(sdbus::IConnection& system_bus, sdbus::ObjectPath profile_object_path,
+          BluetoothDevices& devices)
       : AdaptorInterfaces(system_bus, std::move(profile_object_path)),
         released_(false),
         devices_(devices) {
     registerAdaptor();
     LOG(INFO) << __func__ << ": Created a new BlueZ profile at :"
-                         << getObject().getObjectPath();
+              << getObject().getObjectPath();
   }
-  ~Profile() { unregisterAdaptor(); }
+  ~Profile();
 
  private:
   friend class ProfileManager;
 
   struct FDProperties {
-    explicit FDProperties(const std::map<std::string, sdbus::Variant> &fd_props)
+    explicit FDProperties(const std::map<std::string, sdbus::Variant>& fd_props)
         : version(std::nullopt), features(std::nullopt) {
       if (fd_props.count("Version") == 1) {
         version = fd_props.at("Version").get<uint16_t>();
@@ -84,10 +96,10 @@ class Profile final
   };
 
   void Release() override;
-  void NewConnection(const sdbus::ObjectPath &, const sdbus::UnixFd &,
-                     const std::map<std::string, sdbus::Variant> &) override
+  void NewConnection(const sdbus::ObjectPath&, const sdbus::UnixFd&,
+                     const std::map<std::string, sdbus::Variant>&) override
       ABSL_LOCKS_EXCLUDED(connections_lock_);
-  void RequestDisconnection(const sdbus::ObjectPath &) override
+  void RequestDisconnection(const sdbus::ObjectPath&) override
       ABSL_LOCKS_EXCLUDED(connections_lock_);
 
   std::atomic_bool released_;
@@ -99,23 +111,31 @@ class Profile final
   // Track pending outgoing connection attempts to avoid race with incoming
   std::set<MacAddress> pending_outgoing_ ABSL_GUARDED_BY(connections_lock_);
 
-  BluetoothDevices &devices_;
+  // A timed-out/cancelled outgoing ConnectProfile can still deliver one late
+  // NewConnection. Quarantine it briefly so it cannot become an inbound
+  // server connection.
+  std::map<MacAddress, absl::Time> abandoned_outgoing_
+      ABSL_GUARDED_BY(connections_lock_);
+
+  BluetoothDevices& devices_;
 };
 
 class ProfileManager final
     : private sdbus::ProxyInterfaces<org::bluez::ProfileManager1_proxy> {
  public:
-  ProfileManager(const ProfileManager &) = delete;
-  ProfileManager(ProfileManager &&) = delete;
-  ProfileManager &operator=(const ProfileManager &) = delete;
-  ProfileManager &operator=(ProfileManager &&) = delete;
-  ProfileManager(sdbus::IConnection &system_bus, BluetoothDevices &devices)
-      : ProxyInterfaces(system_bus, sdbus::ServiceName(bluez::SERVICE_DEST),
+  ProfileManager(const ProfileManager&) = delete;
+  ProfileManager(ProfileManager&&) = delete;
+  ProfileManager& operator=(const ProfileManager&) = delete;
+  ProfileManager& operator=(ProfileManager&&) = delete;
+  ProfileManager(std::shared_ptr<sdbus::IConnection> system_bus,
+                 std::shared_ptr<BluetoothDevices> devices)
+      : ProxyInterfaces(*system_bus, sdbus::ServiceName(bluez::SERVICE_DEST),
                         sdbus::ObjectPath("/org/bluez")),
-        devices_(devices) {
+        system_bus_(std::move(system_bus)),
+        devices_(std::move(devices)) {
     registerProxy();
   }
-  ~ProfileManager() { unregisterProxy(); }
+  ~ProfileManager();
 
   bool ProfileRegistered(absl::string_view service_uuid)
       ABSL_LOCKS_EXCLUDED(registered_service_uuids_mutex_);
@@ -130,21 +150,24 @@ class ProfileManager final
       ABSL_LOCKS_EXCLUDED(registered_service_uuids_mutex_);
 
   std::optional<sdbus::UnixFd> GetServiceRecordFD(
-      api::BluetoothDevice &remote_device, absl::string_view service_uuid,
-      CancellationFlag *cancellation_flag)
+      api::BluetoothDevice& remote_device, absl::string_view service_uuid,
+      CancellationFlag* cancellation_flag,
+      absl::Duration timeout = absl::InfiniteDuration())
       ABSL_LOCKS_EXCLUDED(registered_service_uuids_mutex_);
   std::optional<std::pair<std::shared_ptr<BluetoothDevice>, sdbus::UnixFd>>
   GetServiceRecordFD(absl::string_view service_uuid,
-                     CancellationFlag *cancellation_flag)
+                     CancellationFlag* cancellation_flag)
       ABSL_LOCKS_EXCLUDED(registered_service_uuids_mutex_);
   void MarkPendingOutgoing(absl::string_view service_uuid,
-                                  const MacAddress& mac_address)
-             ABSL_LOCKS_EXCLUDED(registered_service_uuids_mutex_);
+                           const MacAddress& mac_address)
+      ABSL_LOCKS_EXCLUDED(registered_service_uuids_mutex_);
   void ClearPendingOutgoing(absl::string_view service_uuid,
                             const MacAddress& mac_address)
       ABSL_LOCKS_EXCLUDED(registered_service_uuids_mutex_);
+
  private:
-  BluetoothDevices &devices_;
+  std::shared_ptr<sdbus::IConnection> system_bus_;
+  std::shared_ptr<BluetoothDevices> devices_;
   // Maps service UUIDs to RegisteredService
   absl::Mutex registered_service_uuids_mutex_;
   std::map<std::string, std::shared_ptr<Profile>> registered_services_

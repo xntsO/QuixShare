@@ -509,6 +509,10 @@ std::string WifiLan::GenerateServiceType(const std::string& service_id) {
 
 int WifiLan::GeneratePort(const std::string& service_id,
                           std::pair<std::int32_t, std::int32_t> port_range) {
+  if (port_range.first == port_range.second) {
+    return port_range.first;
+  }
+
   const std::string service_id_hash =
       std::string(Utils::Sha256Hash(service_id, 4));
 

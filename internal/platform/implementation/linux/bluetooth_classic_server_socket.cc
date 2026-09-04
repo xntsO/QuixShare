@@ -27,28 +27,30 @@ std::unique_ptr<api::BluetoothSocket> BluetoothServerSocket::Accept() {
     return nullptr;
   }
 
-  LOG(INFO) << __func__
-                       << ": accepting new connections for service uuid "
-                       << service_uuid_;
+  LOG(INFO) << __func__ << ": accepting new connections for service uuid "
+            << service_uuid_;
 
-  auto pair = profile_manager_.GetServiceRecordFD(service_uuid_, &stopped_);
+  auto pair = profile_manager_->GetServiceRecordFD(service_uuid_, &stopped_);
   if (!pair.has_value()) {
     if (!stopped_.Cancelled())
-      LOG(ERROR) << __func__
-                         << ": Failed to get a new connection for profile "
-                         << service_uuid_;
+      LOG(ERROR) << __func__ << ": Failed to get a new connection for profile "
+                 << service_uuid_;
     return nullptr;
   }
 
   auto [device, fd] = *pair;
-  LOG(INFO) << __func__ << ": accepted incoming connection for service uuid " << service_uuid_;
+  LOG(INFO) << __func__ << ": accepted incoming connection for service uuid "
+            << service_uuid_;
   return std::make_unique<BluetoothSocket>(device, std::move(fd));
 }
 
 Exception BluetoothServerSocket::Close() {
+  if (closed_.exchange(true)) {
+    return {Exception::kSuccess};
+  }
   LOG(ERROR) << __func__ << ": closing bluetooth server socket";
   stopped_.Cancel();
-  profile_manager_.Unregister(service_uuid_);
+  profile_manager_->Unregister(service_uuid_);
 
   return {Exception::kSuccess};
 }

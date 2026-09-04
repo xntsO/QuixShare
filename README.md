@@ -1,112 +1,118 @@
-<img width="1661" height="569" alt="Frame 2 (2)" src="https://github.com/user-attachments/assets/db8376a9-35d9-406f-bcb8-5581cd0dd762" />
-
-
-
-> ## 🚧 **Under Construction** 🚧  
-> This repo is actively being worked on. Things are buggy, builds may fail, documentation is non-existent, and we test in prod.
->
-> **You have been warned**
-
----
-
-<div align="center">
-  <img src="https://github.com/user-attachments/assets/4e630d75-3484-4f9d-9657-c99a2b64ab69" alt="send" width="400" />
-  <img src="https://github.com/user-attachments/assets/8d925e98-f791-4cd4-8e18-f790b9d10bb5" alt="recv" width="400" />
-</div>
-<p align="center" italic>
-     <em>(Android captured with scrcpy)</em>
+<p align="center">
+  <img src="sharing/linux/app/icons/quixshare-taskbar.png" alt="QuixShare logo" width="128">
 </p>
 
-## What
-This repo consists of the entirety of google's open source nearby library. Currently, it is seperated into 3 (now 2) sections. 
-- Sharing
-- Connections
-- ~Presence~ ( *Was removed by google from their repo. RIP :(*   )
+<h1 align="center">QuixShare</h1>
 
-    
-Linux specific implementation and compatibility shims are provided for building **Sharing** and **Connections**. 
+<p align="center">
+  An independent nearby file-sharing client for Linux.
+</p>
 
-Linux implementation of a QT-based QuickShare application is also provided as a release
+This repository contains a community-maintained Linux desktop client for
+discovering compatible nearby devices and transferring files over local
+Bluetooth and network transports. It also carries the open-source Nearby
+Connections and Sharing code on which the client is built.
 
-## Features
-- Near feature parity with QuickShare on android
-- No companion apps. Works with native quickshare
-- Share files over the network, wifi hotspot or bluetooth
-- Fast, seamless and compatible with any android device
+> This is an independent project. It is not an official Google or Samsung
+> product, and those companies do not endorse or support it. QuixShare is an
+> independent compatibility client with its own name and artwork.
 
+See [PROVENANCE.md](PROVENANCE.md) for the code lineage and trademark boundary.
 
-### How to install
-This repo provides prebuilt AppImages of the Quick Share application. The only officially supported distro is Fedora 43 ( what I'm using personally ) and Ubuntu 24.04 for now. The newest ubuntu images *should* work fine
-although that needs to be tested. I want to support more distros so if you encounter issues installing on your distro, please let me know. 
+## Current status
 
-Download and click to run on most linux distros : )
+The Linux application can send and receive files with compatible Android
+devices. It uses Qt for the desktop interface, BlueZ for Bluetooth, and the
+Linux Nearby platform implementation in this repository.
 
-#### Prerequisites
+The project is still pre-release software. Hardware, Bluetooth controller,
+desktop-session, and firewall combinations vary substantially across Linux
+systems, so review the known limitations before relying on it.
 
-- `systemd`
-- `NetworkManager`
-- `bluez >= 5.85`
+## Installation
 
-**To install the prerequisites, run this command**
-
-Fedora : 
+Tagged releases produce an x86-64 AppImage and a matching SHA-256 checksum.
+Download both files from the repository's Releases page, verify the checksum,
+then make the AppImage executable:
 
 ```bash
-sudo dnf install -y \
-  bluez bluez-libs bluez-libs-devel \
-  sdbus-cpp sdbus-cpp-devel
+sha256sum --check ./*.AppImage.sha256
+chmod +x ./*.AppImage
+./*.AppImage
 ```
----
 
-## Documentation
-Docs is on the backburner for now
+The current CI targets Ubuntu 24.04. Fedora 43 is also used for hardware
+testing. Other distributions may work but are not yet part of the release
+test matrix.
 
-If you want any clarification on anything, feel free to open an issue. I'll get back to you ASAP.
+Runtime prerequisites include:
 
-As a consolation prize, I've indexed this project using [Deepwiki](https://deepwiki.com/kidfromjupiter/nearby). You might have strong feeling about AI use. But I feel like documenting very large codebases is a perfect usecase for such models. (They are called Large Language Models for a reason )
+- a working BlueZ Bluetooth service;
+- systemd and D-Bus;
+- NetworkManager for network-state integration; and
+- a desktop session with either Wayland or X11/XCB support.
 
+The AppImage does not install or modify firewall policy. Fast transfers can
+require an inbound local-network TCP connection; if that connection is
+blocked, the transfer may remain on Bluetooth or fail during a bandwidth
+upgrade. Do not expose the application to untrusted networks without reviewing
+the listener and firewall policy for the release.
 
-**To install the actual library and headers,**
+## Building
 
-Currently there are no prebuilt shared library or headers. You'll have to build them yourself
+Clone recursively because the repository uses Git submodules:
 
-### How to build
+```bash
+git clone --recurse-submodules https://github.com/xntsO/QuixShare.git
+cd QuixShare
+bazel test \
+  --@com_google_protobuf//bazel/toolchains:prefer_prebuilt_protoc=true \
+  --copt=-DGITHUB_BUILD \
+  //sharing/linux/app:application_controller_test \
+  //sharing/linux/app:backend_test
+bazel build \
+  --@com_google_protobuf//bazel/toolchains:prefer_prebuilt_protoc=true \
+  --copt=-DGITHUB_BUILD \
+  //sharing/linux/app:appimage
+```
 
-Best place to consult would be the Github actions and workflows. 
+The GitHub workflows are the canonical dependency and build reference. For
+platform architecture and local development guidance, see
+[LINUX_CONTRIBUTING.md](LINUX_CONTRIBUTING.md).
 
+## Logs and bug reports
 
-## KNOWN BUGS
-- [ ] **No cleanup of LE advertisements after application close**
+Native application logs are stored at:
 
-- [ ] **Launch the app when you want to receive/send**
-        \
-      Keeping the application on may interfere with bluetooth devices. I am working on fixing this. So turn the application on only **when** you want to share stuff
-      
-- [ ] **Bluetooth classic bandwidth**
-  
-    File transfer on bluetooth classic is painfully slow. Bandwidth close to 20KB/s. ~May be a regression issue after bluetooth socket refactor~. May be an issue with sending back acknowledgements. Issue is present on pre-refactor versions. ~Look into Multiplexing maybe~ Multiplexing did not fix it : (?
+```text
+$XDG_STATE_HOME/quixshare/logs/quixshare.log
+```
 
-- [ ] **Investigate why Bluetooth connection requests pairing.**
-      
-  Both the L2CAP socket and Bluetooth profile should be unauthenticated.
-- [ ] **Handle existing files when receiving.**
-      
-  Currently, files are not overwritten if they already exist. Decide whether to overwrite, rename, or skip.
+When `XDG_STATE_HOME` is not an absolute path, the fallback is
+`$HOME/.local/state/quixshare/logs`. Logs rotate locally. Review logs before
+attaching them to a public issue because device names, local addresses, file
+names, and other environment details may be sensitive.
 
-- [ ] **Bluetooth Classic transfer progress issue.**
-      
-  When transferring Android → Linux, Android shows 100% transferred but still says `Sending...`, while Linux lags behind. Could be a bottleneck or Android-side issue.
+Please use the issue templates and include the distribution, desktop session,
+Bluetooth hardware, reproduction steps, and a redacted log excerpt.
 
----
+## Known limitations
 
-### New Features
+- Bluetooth Classic fallback is much slower than a successful network
+  bandwidth upgrade.
+- Linux radio and firewall behavior differs by distribution and hardware.
+- The packaged application intentionally does not reconfigure the active Wi-Fi
+  connection unless a developer-only opt-in is used in a source build.
+- Packaging and dependency notices must pass the
+  checks in [docs/RELEASING.md](docs/RELEASING.md) before a public release.
 
-- [ ] Upstream has been slowly adding webrtc support. Should we support it?
-- [ ] Support enabling receive on detection of fast initiation LE advertisement
+## Contributing and security
 
-## Special thanks
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements and
+[SECURITY.md](SECURITY.md) for private vulnerability reporting.
 
-https://github.com/proatgram and https://github.com/vibhavp
+## License
 
-*they were the original authors of the linux platform support [PR](https://github.com/google/nearby/pull/2098) that I have based much of this codebase upon. I am standing on the shoulders
-of giants*
+The repository is licensed under the [Apache License 2.0](LICENSE). Bundled
+third-party components retain their own licenses; release artifacts must carry
+the corresponding notices and license materials.

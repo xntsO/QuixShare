@@ -1,1 +1,2 @@
 singleton EventBus 1.0 EventBus.qml
+singleton AppSettings 1.0 AppSettings.qml

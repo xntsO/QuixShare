@@ -19,6 +19,7 @@
 #include <sdbus-c++/Types.h>
 
 #include "absl/strings/string_view.h"
+#include "absl/time/time.h"
 #include "internal/platform/implementation/bluetooth_classic.h"
 #include "internal/platform/implementation/linux/bluetooth_adapter.h"
 #include "internal/platform/implementation/linux/bluez_agent.h"
@@ -39,7 +40,7 @@ constexpr char kBluezAgentPath[] = "/com/google/nearby/bluetooth/agent";
 
 }  // namespace
 
-BluetoothClassicMedium::BluetoothClassicMedium(BluetoothAdapter &adapter)
+BluetoothClassicMedium::BluetoothClassicMedium(BluetoothAdapter& adapter)
     : system_bus_(adapter.GetConnection()),
       adapter_(adapter),
       devices_(nullptr),
@@ -47,15 +48,19 @@ BluetoothClassicMedium::BluetoothClassicMedium(BluetoothAdapter &adapter)
       agent_manager_(std::make_unique<AgentManager>(*system_bus_)),
       profile_manager_(nullptr) {
   devices_ = GetSharedBluetoothDevices(system_bus_, adapter_.GetObjectPath());
-  profile_manager_ =
-      std::make_unique<ProfileManager>(*system_bus_, *devices_);
+  profile_manager_ = std::make_shared<ProfileManager>(system_bus_, devices_);
 
   if (!agent_manager_->Register(
           /*capability=*/absl::string_view("NoInputNoOutput"),
           sdbus::ObjectPath(kBluezAgentPath))) {
-    LOG(WARNING) << __func__
-                 << ": Failed to register default BlueZ agent at "
+    LOG(WARNING) << __func__ << ": Failed to register default BlueZ agent at "
                  << kBluezAgentPath;
+  }
+}
+
+BluetoothClassicMedium::~BluetoothClassicMedium() {
+  if (device_watcher_ != nullptr) {
+    StopDiscovery();
   }
 }
 
@@ -67,11 +72,11 @@ bool BluetoothClassicMedium::StartDiscovery(
 
   std::map<std::string, sdbus::Variant> filter;
   filter["Transport"] = sdbus::Variant("auto");
-  auto &adapter = adapter_.GetBluezAdapterObject();
+  auto& adapter = adapter_.GetBluezAdapterObject();
 
   try {
     adapter.SetDiscoveryFilter(filter);
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_METHOD_CALL_ERROR(&adapter, "SetDiscoveryFilter", e);
     device_watcher_ = nullptr;
     return false;
@@ -79,9 +84,9 @@ bool BluetoothClassicMedium::StartDiscovery(
 
   try {
     LOG(INFO) << __func__ << ": Starting BR/EDR discovery on "
-                      << adapter_.GetObjectPath();
+              << adapter_.GetObjectPath();
     adapter.StartDiscovery();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     if (e.getName() != "org.bluez.Error.InProgress") {
       DBUS_LOG_METHOD_CALL_ERROR(&adapter, "StartDiscovery", e);
       device_watcher_ = nullptr;
@@ -93,13 +98,16 @@ bool BluetoothClassicMedium::StartDiscovery(
 }
 
 bool BluetoothClassicMedium::StopDiscovery() {
-  auto &adapter = adapter_.GetBluezAdapterObject();
+  if (device_watcher_ == nullptr) {
+    return true;
+  }
+  auto& adapter = adapter_.GetBluezAdapterObject();
   LOG(INFO) << __func__ << "Stopping discovery on "
-                    << adapter.getProxy().getObjectPath();
+            << adapter.getProxy().getObjectPath();
   auto ret = true;
   try {
     adapter.StopDiscovery();
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     DBUS_LOG_METHOD_CALL_ERROR(&adapter, "StopDiscovery", e);
     ret = false;
   }
@@ -109,12 +117,12 @@ bool BluetoothClassicMedium::StopDiscovery() {
 }
 
 std::unique_ptr<api::BluetoothSocket> BluetoothClassicMedium::ConnectToService(
-    api::BluetoothDevice &remote_device, const std::string &service_uuid,
-    CancellationFlag *cancellation_flag) {
+    api::BluetoothDevice& remote_device, const std::string& service_uuid,
+    CancellationFlag* cancellation_flag) {
   if (!profile_manager_->ProfileRegistered(service_uuid)) {
     if (!profile_manager_->Register(std::nullopt, service_uuid)) {
-      LOG(ERROR) << __func__ << ": Could not register profile "
-                         << service_uuid << " with Bluez";
+      LOG(ERROR) << __func__ << ": Could not register profile " << service_uuid
+                 << " with Bluez";
       return nullptr;
     }
   }
@@ -123,29 +131,34 @@ std::unique_ptr<api::BluetoothSocket> BluetoothClassicMedium::ConnectToService(
   auto device = devices_->get_device_by_address(address);
   if (device == nullptr) {
     LOG(ERROR) << __func__ << ": Device " << address.ToString()
-                       << " is no longer known";
+               << " is no longer known";
     return nullptr;
   }
-  if (!device -> Bonded())
-  {
-
+  if (!device->Bonded()) {
     LOG(ERROR) << __func__ << ": Device " << address.ToString()
-                       << " is not Bonded";
+               << " is not Bonded";
   }
   // Mark as pending BEFORE calling ConnectToProfile to win the race
   profile_manager_->MarkPendingOutgoing(service_uuid, address);
 
-  if (!device->ConnectToProfile(service_uuid)) {
-    profile_manager_->ClearPendingOutgoing(service_uuid, address);
-    return nullptr;
+  bool connect_call_succeeded = device->ConnectToProfile(service_uuid);
+  absl::Duration fd_wait_timeout = absl::InfiniteDuration();
+  if (!connect_call_succeeded) {
+    // BlueZ can return org.bluez.Error.Failed from ConnectProfile and still
+    // deliver the successfully-created socket through NewConnection moments
+    // later. Keep the outgoing marker while allowing that callback to arrive.
+    fd_wait_timeout = absl::Seconds(1);
+    LOG(WARNING) << __func__
+                 << ": ConnectProfile failed; waiting briefly for a late "
+                    "NewConnection callback for device "
+                 << address.ToString();
   }
 
-  auto fd = profile_manager_->GetServiceRecordFD(remote_device, service_uuid,
-                                                 cancellation_flag);
+  auto fd = profile_manager_->GetServiceRecordFD(
+      remote_device, service_uuid, cancellation_flag, fd_wait_timeout);
   if (!fd.has_value()) {
-    LOG(WARNING) << __func__
-                         << ": Failed to get a new connection for profile "
-                         << service_uuid << " for device " << address.ToString();
+    LOG(WARNING) << __func__ << ": Failed to get a new connection for profile "
+                 << service_uuid << " for device " << address.ToString();
     return nullptr;
   }
 
@@ -154,24 +167,24 @@ std::unique_ptr<api::BluetoothSocket> BluetoothClassicMedium::ConnectToService(
 }
 
 std::shared_ptr<api::BluetoothServerSocket>
-BluetoothClassicMedium::ListenForService(const std::string &service_name,
-                                         const std::string &service_uuid) {
+BluetoothClassicMedium::ListenForService(const std::string& service_name,
+                                         const std::string& service_uuid) {
   if (!profile_manager_->ProfileRegistered(service_uuid)) {
     if (!profile_manager_->Register(service_name, service_uuid)) {
-      LOG(ERROR) << __func__ << ": Could not register profile "
-                         << service_name << " " << service_uuid
-                         << " with Bluez";
+      LOG(ERROR) << __func__ << ": Could not register profile " << service_name
+                 << " " << service_uuid << " with Bluez";
       return nullptr;
     }
   }
 
   return std::shared_ptr<api::BluetoothServerSocket>(
-      new BluetoothServerSocket(*profile_manager_, service_uuid));
+      new BluetoothServerSocket(profile_manager_, service_uuid));
 }
 
-api::BluetoothDevice *BluetoothClassicMedium::GetRemoteDevice(
-MacAddress mac_address) {
-  // When BLE is discovering, it looks for remote devices to connect to using BT classic. If only
+api::BluetoothDevice* BluetoothClassicMedium::GetRemoteDevice(
+    MacAddress mac_address) {
+  // When BLE is discovering, it looks for remote devices to connect to using BT
+  // classic. If only
   auto device = devices_->get_device_by_address(mac_address);
   if (device == nullptr) return nullptr;
 
@@ -179,7 +192,7 @@ MacAddress mac_address) {
 }
 
 std::unique_ptr<api::BluetoothPairing> BluetoothClassicMedium::CreatePairing(
-    api::BluetoothDevice &remote_device) {
+    api::BluetoothDevice& remote_device) {
   auto device = devices_->get_device_by_address(remote_device.GetMacAddress());
   if (device == nullptr) return nullptr;
 

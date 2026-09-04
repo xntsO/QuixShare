@@ -118,7 +118,16 @@ class TCPServerSocket {
       return std::nullopt;
     }
 
-    struct sockaddr_in addr;
+    int reuse_address = 1;
+    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse_address,
+                   sizeof(reuse_address)) < 0) {
+      LOG(ERROR) << __func__ << ": Error enabling SO_REUSEADDR: "
+                 << std::strerror(errno);
+      close(sock);
+      return std::nullopt;
+    }
+
+    struct sockaddr_in addr {};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
 
@@ -132,6 +141,7 @@ class TCPServerSocket {
     if (ret < 0) {
       LOG(ERROR) << __func__
                  << ": Error binding to socket: " << std::strerror(errno);
+      close(sock);
       return std::nullopt;
     }
 
@@ -139,6 +149,7 @@ class TCPServerSocket {
     if (ret < 0) {
       LOG(ERROR) << __func__
                  << ": Error listening on socket: " << std::strerror(errno);
+      close(sock);
       return std::nullopt;
     }
 

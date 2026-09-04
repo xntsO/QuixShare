@@ -37,6 +37,7 @@
 #include "internal/platform/implementation/linux/dbus.h"
 #include "internal/platform/implementation/linux/generated/dbus/bluez/adapter_client.h"
 #include "internal/platform/implementation/linux/mutex.h"
+#include "internal/platform/implementation/linux/network_safety.h"
 #include "internal/platform/implementation/linux/preferences_manager.h"
 #include "internal/platform/implementation/linux/submittable_executor.h"
 #include "internal/platform/implementation/linux/timer.h"
@@ -322,6 +323,12 @@ ImplementationPlatform::CreateWifiLanMedium() {
 
 std::unique_ptr<api::WifiHotspotMedium>
 ImplementationPlatform::CreateWifiHotspotMedium() {
+  if (!linux::GetWifiMediumPolicy().wifi_hotspot) {
+    LOG(INFO) << __func__
+              << ": Disabled to preserve the user's active Wi-Fi connection";
+    return nullptr;
+  }
+
   auto nm = std::make_shared<linux::networkmanager::NetworkManager>(
       linux::getSystemBusConnection());
   auto wifiMedium = createWifiMedium(nm);
@@ -337,6 +344,12 @@ ImplementationPlatform::CreateWifiHotspotMedium() {
 
 std::unique_ptr<api::WifiDirectMedium>
 ImplementationPlatform::CreateWifiDirectMedium() {
+  if (!linux::GetWifiMediumPolicy().wifi_direct) {
+    LOG(INFO) << __func__
+              << ": Disabled to preserve the user's active Wi-Fi connection";
+    return nullptr;
+  }
+
   auto nm = std::make_shared<linux::networkmanager::NetworkManager>(
       linux::getSystemBusConnection());
   auto manager = linux::networkmanager::ObjectManager(nm->GetConnection());
@@ -369,8 +382,8 @@ ImplementationPlatform::CreateWifiDirectMedium() {
       }
     }
     LOG(INFO) << __func__ << ": Found Wi-Fi P2P device at " << object_path;
-    return std::make_unique<linux::NetworkManagerWifiDirectMedium>(
-        nm, object_path);
+    return std::make_unique<linux::NetworkManagerWifiDirectMedium>(nm,
+                                                                   object_path);
   }
 
   LOG(WARNING) << __func__

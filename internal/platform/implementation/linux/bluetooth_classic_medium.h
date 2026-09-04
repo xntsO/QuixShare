@@ -34,11 +34,12 @@
 
 namespace nearby {
 namespace linux {
-  // Container of operations that can be performed over the Bluetooth Classic
+// Container of operations that can be performed over the Bluetooth Classic
 // medium.
 class BluetoothClassicMedium : public api::BluetoothClassicMedium {
  public:
-  explicit BluetoothClassicMedium(BluetoothAdapter &adapter);
+  explicit BluetoothClassicMedium(BluetoothAdapter& adapter);
+  ~BluetoothClassicMedium() override;
 
   // https://developer.android.com/reference/android/bluetooth/BluetoothAdapter.html#startDiscovery()
   //
@@ -65,8 +66,8 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   // On success, returns a new BluetoothSocket.
   // On error, returns nullptr.
   std::unique_ptr<api::BluetoothSocket> ConnectToService(
-      api::BluetoothDevice &remote_device, const std::string &service_uuid,
-      CancellationFlag *cancellation_flag) override;
+      api::BluetoothDevice& remote_device, const std::string& service_uuid,
+      CancellationFlag* cancellation_flag) override;
 
   // https://developer.android.com/reference/android/bluetooth/BluetoothAdapter.html#listenUsingInsecureRfcommWithServiceRecord
   //
@@ -78,8 +79,8 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   //
   //  Returns nullptr error.
   std::shared_ptr<api::BluetoothServerSocket> ListenForService(
-      const std::string &service_name,
-      const std::string &service_uuid) override;
+      const std::string& service_name,
+      const std::string& service_uuid) override;
 
   // https://developer.android.com/reference/android/bluetooth/BluetoothDevice.html#createBond()
   //
@@ -87,9 +88,9 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   // Return a Bluetooth pairing instance to handle the pairing process with the
   // remote device.
   std::unique_ptr<api::BluetoothPairing> CreatePairing(
-      api::BluetoothDevice &remote_device) override;
+      api::BluetoothDevice& remote_device) override;
 
-  api::BluetoothDevice *GetRemoteDevice(MacAddress mac_address) override;
+  api::BluetoothDevice* GetRemoteDevice(MacAddress mac_address) override;
 
  private:
   std::shared_ptr<sdbus::IConnection> system_bus_;
@@ -99,7 +100,7 @@ class BluetoothClassicMedium : public api::BluetoothClassicMedium {
   std::unique_ptr<DeviceWatcher> device_watcher_;
 
   std::unique_ptr<AgentManager> agent_manager_;
-  std::unique_ptr<ProfileManager> profile_manager_;
+  std::shared_ptr<ProfileManager> profile_manager_;
 };
 
 }  // namespace linux

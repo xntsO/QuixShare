@@ -33,8 +33,8 @@
 namespace nearby::sharing::linux {
 namespace {
 
-constexpr char kLogFileName[] = "quickshare.log";
-constexpr char kLockFileName[] = ".quickshare.log.lock";
+constexpr char kLogFileName[] = "quixshare.log";
+constexpr char kLockFileName[] = ".quixshare.log.lock";
 
 bool WriteAll(int fd, const char* data, size_t size) {
   while (size > 0) {
@@ -183,11 +183,11 @@ void NativeFileLogSink::WriteFallback(const char* data, size_t size) {
 
 std::unique_ptr<NativeFileLogging> NativeFileLogging::Initialize() {
   std::unique_ptr<NativeFileLogSink> sink =
-      NativeFileLogSink::Create(internal::GetQuickShareLogPath().ToString());
+      NativeFileLogSink::Create(internal::GetQuixShareLogPath().ToString());
   absl::InitializeLog();
   if (sink == nullptr) {
     WriteToStderr(
-        "QuickShare: unable to initialize file logging; using "
+        "QuixShare: unable to initialize file logging; using "
         "stderr.\n");
     return nullptr;
   }

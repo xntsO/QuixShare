@@ -15,7 +15,9 @@
 #ifndef PLATFORM_IMPL_LINUX_WIFI_LAN_H_
 #define PLATFORM_IMPL_LINUX_WIFI_LAN_H_
 #include <sdbus-c++/IConnection.h>
+#include <cstdint>
 #include <memory>
+#include <utility>
 
 #include "absl/container/flat_hash_map.h"
 #include "absl/synchronization/mutex.h"
@@ -26,6 +28,17 @@
 
 namespace nearby {
 namespace linux {
+
+// Keep inbound Nearby Connections traffic on the port permitted by the Linux
+// package's firewall rule. The same service listener is used for normal
+// Wi-Fi LAN advertising and bandwidth upgrades, which run sequentially.
+inline constexpr std::int32_t kQuixShareWifiLanPort = 53317;
+
+constexpr std::pair<std::int32_t, std::int32_t>
+GetWifiLanDynamicPortRange() {
+  return {kQuixShareWifiLanPort, kQuixShareWifiLanPort};
+}
+
 class WifiLanMedium : public api::WifiLanMedium {
  public:
   explicit WifiLanMedium(std::shared_ptr<networkmanager::NetworkManager> network_manager);
@@ -63,7 +76,7 @@ class WifiLanMedium : public api::WifiLanMedium {
       int port = 0) override;
   absl::optional<std::pair<std::int32_t, std::int32_t>> GetDynamicPortRange()
       override {
-    return std::nullopt;
+    return GetWifiLanDynamicPortRange();
   }
 
     // Returns the list of ip address candidates that can be used to connect to

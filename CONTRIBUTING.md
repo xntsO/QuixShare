@@ -1,28 +1,46 @@
-# How to Contribute
+# Contributing
 
-We'd love to accept your patches and contributions to this project. There are
-just a few small guidelines you need to follow.
+Contributions are welcome through GitHub pull requests and issues.
 
-## Contributor License Agreement
+## Before opening a change
 
-Contributions to this project must be accompanied by a Contributor License
-Agreement. You (or your employer) retain the copyright to your contribution;
-this simply gives us permission to use and redistribute your contributions as
-part of the project. Head over to <https://cla.developers.google.com/> to see
-your current agreements on file or to sign a new one.
+- Search existing issues and pull requests for related work.
+- Keep changes focused and preserve copyright, attribution, and license notices
+  from upstream files.
+- Do not include credentials, private logs, generated build trees, packaged
+  binaries, or third-party assets without a compatible license.
+- For Linux platform work, read [LINUX_CONTRIBUTING.md](LINUX_CONTRIBUTING.md).
 
-You generally only need to submit a CLA once, so if you've already submitted one
-(even if it was for a different project), you probably don't need to do it
-again.
+## Pull requests
 
-## Code reviews
+Describe the problem, the approach, and the exact verification performed. Add
+automated regression coverage when practical. User-interface changes should
+include screenshots or a short recording; hardware-dependent transport changes
+should include redacted logs and identify the tested adapters and devices.
 
-All submissions, including submissions by project members, require review. We
-use GitHub pull requests for this purpose. Consult
-[GitHub Help](https://help.github.com/articles/about-pull-requests/) for more
-information on using pull requests.
+Run the relevant focused tests and the release hygiene check before submitting:
 
-## Community Guidelines
+```bash
+./util/check_release_hygiene.sh
+git diff --check
+```
 
-This project follows [Google's Open Source Community
-Guidelines](https://opensource.google/conduct/).
+The pull request template contains space for additional test commands.
+
+## Licensing contributions
+
+Unless explicitly stated otherwise, a contribution intentionally submitted to
+this repository is provided under the Apache License 2.0 in the root `LICENSE`
+file. By submitting a contribution, you confirm that you have the right to do
+so and that its dependencies and included assets are compatible with that
+license and with distribution of the project.
+
+This independent project does not use Google's contributor license agreement.
+Contributing here does not submit the change to Google or any other upstream
+project.
+
+## Conduct and security
+
+Participation is governed by [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Report
+security vulnerabilities privately as described in [SECURITY.md](SECURITY.md),
+not in a public issue.

@@ -33,6 +33,9 @@
 #include "internal/base/file_path.h"
 #include "internal/flags/nearby_flags.h"
 #include "internal/platform/implementation/device_info.h"
+#if defined(__linux__)
+#include "internal/platform/implementation/linux/network_safety.h"
+#endif
 #include "internal/platform/mutex_lock.h"
 #include "internal/platform/task_runner.h"
 #include "sharing/advertisement.h"
@@ -109,6 +112,13 @@ bool ShouldEnableWifiLan(ConnectivityManager& connectivity_manager) {
 // See b/380191431 for more details.
 
 bool ShouldEnableWifiHotspot(ConnectivityManager& connectivity_manager) {
+#if defined(__linux__)
+  if (!nearby::linux::GetWifiMediumPolicy().wifi_hotspot) {
+    LOG(INFO) << __func__
+              << ": Disabled by the default Linux network safety policy";
+    return false;
+  }
+#endif
   if (connectivity_manager.IsHPRealtekDevice()) {
     LOG(WARNING) << __func__ << ": Disable wifi hotspot for HP with Realtek";
     return false;

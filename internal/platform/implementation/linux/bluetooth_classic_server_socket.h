@@ -15,6 +15,9 @@
 #ifndef PLATFORM_IMPL_LINUX_BLUETOOTH_SERVER_SOCKET_H_
 #define PLATFORM_IMPL_LINUX_BLUETOOTH_SERVER_SOCKET_H_
 
+#include <atomic>
+#include <memory>
+
 #include "absl/strings/string_view.h"
 #include "internal/platform/cancellation_flag.h"
 #include "internal/platform/exception.h"
@@ -25,9 +28,11 @@ namespace nearby {
 namespace linux {
 class BluetoothServerSocket final : public api::BluetoothServerSocket {
  public:
-  BluetoothServerSocket(ProfileManager &profile_manager,
+  BluetoothServerSocket(std::shared_ptr<ProfileManager> profile_manager,
                         absl::string_view service_uuid)
-      : profile_manager_(profile_manager), service_uuid_(service_uuid) {}
+      : profile_manager_(std::move(profile_manager)),
+        service_uuid_(service_uuid) {}
+  ~BluetoothServerSocket() override { Close(); }
 
   // https://developer.android.com/reference/android/bluetooth/BluetoothServerSocket.html#accept()
   //
@@ -47,7 +52,8 @@ class BluetoothServerSocket final : public api::BluetoothServerSocket {
 
  private:
   CancellationFlag stopped_;
-  ProfileManager &profile_manager_;
+  std::atomic_bool closed_ = false;
+  std::shared_ptr<ProfileManager> profile_manager_;
   std::string service_uuid_;
 };
 }  // namespace linux

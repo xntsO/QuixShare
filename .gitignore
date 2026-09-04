@@ -61,6 +61,21 @@ bazel-*
 /sharing/linux/dist-minimal/
 /sharing/linux/app/linuxdeploy*
 
+# Linux desktop release and local packaging outputs
+/sharing/linux/dist*/
+/sharing/linux/app/*.AppImage
+/sharing/linux/app/*.AppImage.sha256
+*.deb
+*.rpm
+
+# Local diagnostics and editor/tool outputs
+*.log
+core
+core.*
+vgcore.*
+/compile_commands.json
+/.cache/
+
 # Devcontainers
 # /.devcontainer/
 /connections/walkietalkie/

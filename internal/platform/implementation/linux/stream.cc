@@ -56,14 +56,19 @@ ExceptionOr<ByteArray> InputStream::Read(std::int64_t size) {
       return {Exception::kIo};
     }
 
-    if (pfd.revents & POLLNVAL || pfd.revents & POLLERR) {
-      LOG(ERROR) << __func__ << ": Error reading from BluetoothSocket: "
-                 << std::strerror(errno);
+    if (pfd.revents & POLLNVAL) {
+      LOG(ERROR) << __func__ << ": BluetoothSocket fd is invalid";
       return {Exception::kIo};
     }
 
-    if (pfd.revents & (POLLIN | POLLHUP)) {
-      ssize_t bytes_read = recv(fd_, buffer.data(), buffer.size(), 0);
+    // POLLERR and POLLHUP may be reported together with POLLIN while unread
+    // bytes are still queued.  Read those bytes before reporting the terminal
+    // socket state; treating POLLERR first loses the tail of the protocol
+    // stream.  MSG_DONTWAIT also prevents a close/error notification from
+    // making recv() block if another reader drained the queue after poll().
+    if (pfd.revents & (POLLIN | POLLERR | POLLHUP)) {
+      ssize_t bytes_read =
+          recv(fd_, buffer.data(), buffer.size(), MSG_DONTWAIT);
 
       if (bytes_read > 0) {
         buffer.resize(static_cast<std::size_t>(bytes_read));
@@ -80,8 +85,27 @@ ExceptionOr<ByteArray> InputStream::Read(std::int64_t size) {
       }
 
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        // Non-blocking fd had no data by the time recv() ran.
-        // Go back to poll.
+        if (pfd.revents & POLLERR) {
+          int socket_error = 0;
+          socklen_t socket_error_size = sizeof(socket_error);
+          if (getsockopt(fd_, SOL_SOCKET, SO_ERROR, &socket_error,
+                         &socket_error_size) < 0) {
+            LOG(ERROR) << __func__ << ": getsockopt(SO_ERROR) failed: "
+                       << std::strerror(errno);
+          } else if (socket_error != 0) {
+            LOG(ERROR) << __func__ << ": BluetoothSocket error: "
+                       << std::strerror(socket_error);
+          } else {
+            LOG(ERROR) << __func__
+                       << ": BluetoothSocket reported POLLERR without an "
+                          "SO_ERROR value";
+          }
+          return {Exception::kIo};
+        }
+        if (pfd.revents & POLLHUP) {
+          return ExceptionOr<ByteArray>(ByteArray(std::string()));
+        }
+        // The fd had no data by the time recv() ran. Go back to poll().
         continue;
       }
 

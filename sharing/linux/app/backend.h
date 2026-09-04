@@ -12,6 +12,7 @@
 #include <QObject>
 #include <QSet>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 #include "QtQmlIntegration/qqmlintegration.h"
@@ -84,9 +85,12 @@ class ShareTransferModel : public QAbstractListModel {
 
   void ApplyTarget(const ShareTarget& target);
   void ApplyTransfer(bool receive_mode, const ShareTarget& target,
-                     const TransferMetadata& transfer, int64_t total_bytes);
+                     const TransferMetadata& transfer, int64_t total_bytes,
+                     const QString& local_path);
   void PrepareOutgoingTransfer(int64_t target_id, const QString& local_path,
                                const std::optional<ShareTarget>& target);
+  void MarkOutgoingTransferFailed(int64_t target_id);
+  void RemoveFinalTransfer(int64_t target_id);
 
  private:
   struct Row {
@@ -110,6 +114,10 @@ class Backend : public QObject,
   Q_OBJECT
   QML_ELEMENT
   Q_PROPERTY(QString hostname READ hostname CONSTANT)
+  Q_PROPERTY(QString deviceName READ deviceName NOTIFY deviceNameChanged)
+  Q_PROPERTY(QString downloadPath READ downloadPath NOTIFY downloadPathChanged)
+  Q_PROPERTY(bool visibleToEveryone READ visibleToEveryone NOTIFY
+                 visibleToEveryoneChanged)
   Q_PROPERTY(QAbstractListModel* targets READ targets CONSTANT)
   Q_PROPERTY(QAbstractListModel* transfers READ transfers CONSTANT)
 
@@ -118,15 +126,23 @@ class Backend : public QObject,
   ~Backend() override;
 
   QString hostname() const;
+  QString deviceName() const { return device_name_; }
+  QString downloadPath() const { return download_path_; }
+  bool visibleToEveryone() const { return visible_to_everyone_; }
   QAbstractListModel* targets() { return &targets_; }
   QAbstractListModel* transfers() { return &transfers_; }
 
   Q_INVOKABLE void startReceive();
   Q_INVOKABLE void startDiscovery();
   Q_INVOKABLE bool sendFile(qint64 share_target_id, const QString& path);
+  Q_INVOKABLE bool sendFiles(qint64 share_target_id, const QStringList& paths);
   Q_INVOKABLE void accept(qint64 share_target_id);
   Q_INVOKABLE void reject(qint64 share_target_id);
   Q_INVOKABLE void cancel(qint64 share_target_id);
+  Q_INVOKABLE void clearTransfer(qint64 share_target_id);
+  Q_INVOKABLE void setDeviceName(const QString& name);
+  Q_INVOKABLE void setDownloadPath(const QString& path);
+  Q_INVOKABLE void setVisibleToEveryone(bool visible);
   void shutdown();
 
  signals:
@@ -137,6 +153,10 @@ class Backend : public QObject,
   void transferFinished(qint64 share_target_id, bool receive_mode,
                         QString device_name, QString status);
   void outgoingTransferStartFailed(qint64 share_target_id);
+  void deviceNameChanged();
+  void downloadPathChanged();
+  void visibleToEveryoneChanged();
+  void settingChangeFailed(QString setting, QString message);
 
  private:
   friend class BackendTestPeer;
@@ -195,6 +215,7 @@ class Backend : public QObject,
   void StartIncomingOfferTimer(qint64 share_target_id);
   void ResolveIncomingOffer(qint64 share_target_id);
   void OnIncomingOfferTimeout(qint64 share_target_id);
+  void ApplyVisibilityRequest();
   std::function<void(NearbySharingService::StatusCodes)> StatusCallback(
       QString operation);
   void ReportStatus(const QString& operation,
@@ -224,4 +245,9 @@ class Backend : public QObject,
   bool fallback_receive_window_ = false;
   bool fallback_receive_used_ = false;
   bool shutting_down_ = false;
+  QString device_name_;
+  QString download_path_;
+  bool visible_to_everyone_ = true;
+  bool requested_visible_to_everyone_ = true;
+  bool visibility_operation_in_flight_ = false;
 };

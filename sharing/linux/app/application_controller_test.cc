@@ -1,7 +1,11 @@
 #include "sharing/linux/app/application_controller.h"
 
 #include <QApplication>
+#include <QFile>
+#include <QFileInfo>
 #include <QQuickWindow>
+#include <QTemporaryDir>
+#include <QUrl>
 
 #include "gtest/gtest.h"
 
@@ -34,6 +38,20 @@ class ApplicationControllerTestPeer {
   static bool HasNotification(const ApplicationController& controller,
                               uint notification_id) {
     return controller.notification_to_transfer_.contains(notification_id);
+  }
+
+  static std::optional<QString> ValidateSelectedFolder(
+      const QByteArray& output) {
+    return ApplicationController::ValidateSelectedFolder(output);
+  }
+
+  static QString InitialFolder(ApplicationController& controller,
+                               const QString& requested_path) {
+    return controller.InitialFolder(requested_path);
+  }
+
+  static QStringList ValidateSelectedFiles(const QByteArray& output) {
+    return ApplicationController::ValidateSelectedFiles(output);
   }
 };
 
@@ -106,6 +124,97 @@ TEST(ApplicationControllerTest, MissingNotificationActionsShowsWindow) {
   ApplicationControllerTestPeer::DeliverOfferWithoutActions(controller, 401);
 
   EXPECT_TRUE(window.isVisible());
+}
+
+TEST(ApplicationControllerTest, NativeFolderSelectionAcceptsLocalPathsAndUrls) {
+  QTemporaryDir directory;
+  ASSERT_TRUE(directory.isValid());
+  const QString expected = QFileInfo(directory.path()).absoluteFilePath();
+
+  const std::optional<QString> local =
+      ApplicationControllerTestPeer::ValidateSelectedFolder(
+          directory.path().toLocal8Bit() + '\n');
+  ASSERT_TRUE(local.has_value());
+  EXPECT_EQ(*local, expected);
+
+  const std::optional<QString> url =
+      ApplicationControllerTestPeer::ValidateSelectedFolder(
+          QUrl::fromLocalFile(directory.path()).toString().toLocal8Bit() +
+          '\n');
+  ASSERT_TRUE(url.has_value());
+  EXPECT_EQ(*url, expected);
+}
+
+TEST(ApplicationControllerTest, NativeFolderSelectionRejectsInvalidOutput) {
+  QTemporaryDir directory;
+  ASSERT_TRUE(directory.isValid());
+  QFile file(directory.filePath(QStringLiteral("not-a-folder")));
+  ASSERT_TRUE(file.open(QIODevice::WriteOnly));
+  file.close();
+
+  EXPECT_FALSE(ApplicationControllerTestPeer::ValidateSelectedFolder({})
+                   .has_value());
+  EXPECT_FALSE(ApplicationControllerTestPeer::ValidateSelectedFolder(
+                   file.fileName().toLocal8Bit())
+                   .has_value());
+  EXPECT_FALSE(ApplicationControllerTestPeer::ValidateSelectedFolder(
+                   directory.filePath(QStringLiteral("missing")).toLocal8Bit())
+                   .has_value());
+}
+
+TEST(ApplicationControllerTest, NativeFileSelectionAcceptsMultipleFiles) {
+  QTemporaryDir directory;
+  ASSERT_TRUE(directory.isValid());
+  const QString first_path = directory.filePath(QStringLiteral("first.txt"));
+  const QString second_path = directory.filePath(QStringLiteral("second.txt"));
+  QFile first(first_path);
+  QFile second(second_path);
+  ASSERT_TRUE(first.open(QIODevice::WriteOnly));
+  ASSERT_TRUE(second.open(QIODevice::WriteOnly));
+  first.close();
+  second.close();
+
+  const QByteArray output = first_path.toLocal8Bit() + '\n' +
+                            QUrl::fromLocalFile(second_path)
+                                .toString()
+                                .toLocal8Bit() +
+                            '\n';
+  EXPECT_EQ(ApplicationControllerTestPeer::ValidateSelectedFiles(output),
+            QStringList({QFileInfo(first_path).absoluteFilePath(),
+                         QFileInfo(second_path).absoluteFilePath()}));
+}
+
+TEST(ApplicationControllerTest, NativeFileSelectionRejectsInvalidEntries) {
+  QTemporaryDir directory;
+  ASSERT_TRUE(directory.isValid());
+  const QString valid_path = directory.filePath(QStringLiteral("valid.txt"));
+  QFile valid(valid_path);
+  ASSERT_TRUE(valid.open(QIODevice::WriteOnly));
+  valid.close();
+
+  EXPECT_TRUE(
+      ApplicationControllerTestPeer::ValidateSelectedFiles({}).isEmpty());
+  EXPECT_TRUE(ApplicationControllerTestPeer::ValidateSelectedFiles(
+                  directory.path().toLocal8Bit())
+                  .isEmpty());
+  EXPECT_TRUE(ApplicationControllerTestPeer::ValidateSelectedFiles(
+                  valid_path.toLocal8Bit() + '\n' +
+                  directory.filePath(QStringLiteral("missing.txt"))
+                      .toLocal8Bit())
+                  .isEmpty());
+}
+
+TEST(ApplicationControllerTest, NativeFolderPickerUsesValidInitialDirectory) {
+  QTemporaryDir directory;
+  ASSERT_TRUE(directory.isValid());
+  ApplicationController controller(TestApplication());
+
+  EXPECT_EQ(ApplicationControllerTestPeer::InitialFolder(controller,
+                                                         directory.path()),
+            QFileInfo(directory.path()).absoluteFilePath());
+  EXPECT_EQ(ApplicationControllerTestPeer::InitialFolder(
+                controller, QUrl::fromLocalFile(directory.path()).toString()),
+            QFileInfo(directory.path()).absoluteFilePath());
 }
 
 }  // namespace

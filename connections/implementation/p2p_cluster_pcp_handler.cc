@@ -294,6 +294,9 @@ BasePcpHandler::StartOperationResult P2pClusterPcpHandler::StartAdvertisingImpl(
 
 Status P2pClusterPcpHandler::StopAdvertisingImpl(ClientProxy* client) {
   if (client->GetClientId() == bluetooth_classic_advertiser_client_id_) {
+    // Restore discoverability while BlueZ advertising is still in its stable
+    // active state. BlueZ can reject the mode update as Busy once advertisement
+    // and listener teardown has started.
     bluetooth_medium_.TurnOffDiscoverability();
     if (api::ImplementationPlatform::GetCurrentOS() == api::OSName::kChromeOS ||
         api::ImplementationPlatform::GetCurrentOS() == api::OSName::kLinux) {

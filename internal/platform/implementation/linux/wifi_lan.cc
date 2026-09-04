@@ -258,7 +258,8 @@ std::unique_ptr<api::WifiLanSocket> WifiLanMedium::ConnectToService(
 
 std::unique_ptr<api::WifiLanServerSocket> WifiLanMedium::ListenForService(
     int port) {
-  LOG(INFO) << __func__ << ": Listening for service WifiLanMedium";
+  LOG(INFO) << __func__ << ": Listening for service WifiLanMedium on port "
+            << port;
   auto socket = TCPServerSocket::Listen(std::nullopt, port);
   if (!socket.has_value()) return nullptr;
 

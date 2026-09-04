@@ -27,6 +27,7 @@
 #include <sdbus-c++/Types.h>
 
 #include "absl/synchronization/mutex.h"
+#include "absl/time/time.h"
 #include "internal/platform/cancellation_flag_listener.h"
 #include "internal/platform/implementation/linux/bluetooth_bluez_profile.h"
 #include "internal/platform/implementation/linux/bluetooth_classic_device.h"
@@ -37,6 +38,21 @@
 
 namespace nearby {
 namespace linux {
+namespace {
+
+constexpr absl::Duration kAbandonedOutgoingLifetime = absl::Seconds(5);
+
+}  // namespace
+
+bool profile_internal::AwaitProfileEvent(absl::Mutex* mutex,
+                                         const absl::Condition& condition,
+                                         absl::Duration timeout) {
+  if (timeout == absl::InfiniteDuration()) {
+    mutex->Await(condition);
+    return true;
+  }
+  return mutex->AwaitWithTimeout(condition, timeout);
+}
 
 bool ProfileManager::ProfileRegistered(absl::string_view service_uuid) {
   registered_service_uuids_mutex_.ReaderLock();
@@ -45,19 +61,48 @@ bool ProfileManager::ProfileRegistered(absl::string_view service_uuid) {
   return registered;
 }
 
-void Profile::Release() {
+Profile::~Profile() {
   released_ = true;
+  {
+    // Unlocking wakes any waiter so it can observe released_.
+    absl::MutexLock lock(&connections_lock_);
+  }
+  unregisterAdaptor();
+}
+
+ProfileManager::~ProfileManager() {
+  std::vector<std::shared_ptr<Profile>> profiles;
+  {
+    absl::MutexLock lock(&registered_service_uuids_mutex_);
+    for (const auto& [uuid, profile] : registered_services_) {
+      profiles.push_back(profile);
+    }
+  }
+  for (const auto& profile : profiles) {
+    profile->Release();
+  }
+  unregisterProxy();
+}
+
+void Profile::Release() {
+  if (released_.exchange(true)) {
+    return;
+  }
+  {
+    // Unlocking wakes client and server waits whose condition includes
+    // released_.
+    absl::MutexLock lock(&connections_lock_);
+  }
   LOG(INFO) << __func__ << ": Profile object " << getObject().getObjectPath()
-                       << " has been released";
+            << " has been released";
 }
 
 void Profile::NewConnection(
-    const sdbus::ObjectPath &device_object_path, const sdbus::UnixFd &fd,
-    const std::map<std::string, sdbus::Variant> &fd_props) {
+    const sdbus::ObjectPath& device_object_path, const sdbus::UnixFd& fd,
+    const std::map<std::string, sdbus::Variant>& fd_props) {
   if (released_) {
-    LOG(ERROR) << __func__
-                       << ": NewConnection called on released object "
-                       << getObject().getObjectPath();
+    LOG(ERROR) << __func__ << ": NewConnection called on released object "
+               << getObject().getObjectPath();
     throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Rejected"),
                        "NewConnection called on released object");
   }
@@ -71,38 +116,53 @@ void Profile::NewConnection(
   auto alias = device->GetName();
   auto mac_addr = device->GetAddress();
   LOG(INFO) << __func__ << ": " << getObject().getObjectPath()
-                       << ": Connected to " << mac_addr.ToString();
+            << ": Connected to " << mac_addr.ToString();
 
   FDProperties props(fd_props);
 
   LOG(INFO) << "PUSH key(GetAddress.ToString)=" << mac_addr.ToString()
             << " alias=" << alias;
-  LOG(INFO) << "PUSH_ENTER profile=" << this
-          << " mutex=" << &connections_lock_
-          << " obj=" << getObject().getObjectPath()
-          << " path=" << device_object_path;
+  LOG(INFO) << "PUSH_ENTER profile=" << this << " mutex=" << &connections_lock_
+            << " obj=" << getObject().getObjectPath()
+            << " path=" << device_object_path;
   {
     absl::MutexLock l(&connections_lock_);
+    if (released_) {
+      LOG(WARNING) << __func__ << ": Dropping connection for released profile";
+      return;
+    }
+    auto abandoned = abandoned_outgoing_.find(mac_addr);
+    if (abandoned != abandoned_outgoing_.end()) {
+      if (absl::Now() < abandoned->second) {
+        LOG(WARNING) << __func__ << ": Dropping late abandoned outgoing "
+                     << "connection from " << mac_addr.ToString();
+        return;
+      }
+      abandoned_outgoing_.erase(abandoned);
+    }
     connections_[mac_addr].push_back(std::pair(fd, props));
   }
 }
 
 void Profile::RequestDisconnection(
-    const sdbus::ObjectPath &device_object_path) {
+    const sdbus::ObjectPath& device_object_path) {
   auto device = devices_.get_device_by_path(device_object_path);
   if (device == nullptr) {
     LOG(ERROR) << __func__ << ": " << getObject().getObjectPath()
-                       << ": RequestDisconnection called with a device object "
-                          "we don't know about: "
-                       << device_object_path;
-    throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Rejected"), "Unknown object");
+               << ": RequestDisconnection called with a device object "
+                  "we don't know about: "
+               << device_object_path;
+    throw sdbus::Error(sdbus::Error::Name("org.bluez.Error.Rejected"),
+                       "Unknown object");
   }
 
-  auto mac_addr = device -> GetMacAddress();
+  auto mac_addr = device->GetMacAddress();
   LOG(INFO) << __func__ << ": Disconnection requested for device "
-                       << device_object_path;
+            << device_object_path;
 
   absl::MutexLock l(&connections_lock_);
+  pending_outgoing_.erase(mac_addr);
+  abandoned_outgoing_.erase(mac_addr);
   if (connections_.count(mac_addr) == 0) {
     LOG(ERROR)
         << __func__
@@ -116,14 +176,14 @@ bool ProfileManager::Register(std::optional<absl::string_view> name,
                               absl::string_view service_uuid) {
   absl::MutexLock l(&registered_service_uuids_mutex_);
   if (registered_services_.count(std::string(service_uuid)) == 1) {
-    LOG(WARNING) << __func__ << ": Trying to register profile "
-                         << service_uuid << " which was already registered.";
+    LOG(WARNING) << __func__ << ": Trying to register profile " << service_uuid
+                 << " which was already registered.";
     return true;
   }
 
   auto profile = std::make_shared<Profile>(
       getProxy().getConnection(), bluez::profile_object_path(service_uuid),
-      devices_);
+      *devices_);
 
   try {
     std::map<std::string, sdbus::Variant> options;
@@ -137,16 +197,15 @@ bool ProfileManager::Register(std::optional<absl::string_view> name,
 
     RegisterProfile(profile->getObject().getObjectPath(),
                     std::string(service_uuid), options);
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     BLUEZ_LOG_METHOD_CALL_ERROR(this, "RegisterProfile", e);
     return false;
   }
 
   registered_services_.emplace(service_uuid, profile);
 
-  LOG(INFO) << __func__
-                    << ": Registered profile instance for service uuid "
-                    << service_uuid;
+  LOG(INFO) << __func__ << ": Registered profile instance for service uuid "
+            << service_uuid;
 
   return true;
 }
@@ -161,12 +220,11 @@ void ProfileManager::Unregister(absl::string_view service_uuid) {
   }
 
   auto profile_object_path = bluez::profile_object_path(service_uuid);
-  LOG(INFO) << __func__ << ": Unregistering profile "
-                       << profile_object_path;
+  LOG(INFO) << __func__ << ": Unregistering profile " << profile_object_path;
 
   try {
     UnregisterProfile(profile_object_path);
-  } catch (const sdbus::Error &e) {
+  } catch (const sdbus::Error& e) {
     BLUEZ_LOG_METHOD_CALL_ERROR(this, "UnregisterProfile", e);
   }
 
@@ -174,16 +232,17 @@ void ProfileManager::Unregister(absl::string_view service_uuid) {
 }
 
 // Get a service record FD for a connected profile (identified by service_uuid)
-// to the given device. Only fires when we're requesting a new connection. i.e: we're the client
+// to the given device. Only fires when we're requesting a new connection. i.e:
+// we're the client
 std::optional<sdbus::UnixFd> ProfileManager::GetServiceRecordFD(
-    api::BluetoothDevice &remote_device, absl::string_view service_uuid,
-    CancellationFlag *cancellation_flag) {
+    api::BluetoothDevice& remote_device, absl::string_view service_uuid,
+    CancellationFlag* cancellation_flag, absl::Duration timeout) {
   std::shared_ptr<Profile> profile;
   {
     absl::ReaderMutexLock lock(&registered_service_uuids_mutex_);
     if (registered_services_.count(std::string(service_uuid)) == 0) {
       LOG(ERROR) << __func__ << ": Service " << service_uuid
-                         << " is not registered";
+                 << " is not registered";
       return std::nullopt;
     }
     profile = registered_services_[std::string(service_uuid)];
@@ -194,15 +253,16 @@ std::optional<sdbus::UnixFd> ProfileManager::GetServiceRecordFD(
   if (cancellation_flag != nullptr)
     cancel_listener = std::make_unique<CancellationFlagListener>(
         cancellation_flag, [profile]() {
-  if (profile->connections_lock_.TryLock()) {
-    profile->connections_lock_.Unlock();
-  }
-}
-);
+          // Block until an in-progress Await releases the mutex, then unlock
+          // it to wake the waiter. TryLock can lose cancellation when Cancel
+          // races with Await's initial condition check.
+          profile->connections_lock_.Lock();
+          profile->connections_lock_.Unlock();
+        });
 
   LOG(INFO) << __func__ << ": " << profile->getObject().getObjectPath()
-                       << ": Attempting to get a FD for service "
-                       << service_uuid << " on device " << mac_addr.ToString();
+            << ": Attempting to get a FD for service " << service_uuid
+            << " on device " << mac_addr.ToString();
 
   LOG(INFO) << "WAIT profile=" << profile.get()
             << " mutex=" << &profile->connections_lock_
@@ -210,46 +270,61 @@ std::optional<sdbus::UnixFd> ProfileManager::GetServiceRecordFD(
             << " key=" << mac_addr.ToString();
   auto cond = [mac_addr, profile, cancellation_flag]() {
     profile->connections_lock_.AssertHeld();
-    LOG(INFO) << "connections_lock_ is held by: " << mac_addr.ToString() << " with ptr: " << &profile -> connections_lock_;
-    return profile->connections_.count(mac_addr) != 0 ||
+    LOG(INFO) << "connections_lock_ is held by: " << mac_addr.ToString()
+              << " with ptr: " << &profile->connections_lock_;
+    return profile->connections_.count(mac_addr) != 0 || profile->released_ ||
            (cancellation_flag != nullptr && cancellation_flag->Cancelled());
   };
 
-  // BUG: Race condition. Hangs here
   LOG(INFO) << "WAIT key(GetMacAddress)=" << mac_addr.ToString();
-  LOG(INFO) << "connections_ size" << profile -> connections_.size();
-  absl::MutexLock connections_lock(&profile->connections_lock_,
-                                   absl::Condition(&cond));
+  absl::MutexLock connections_lock(&profile->connections_lock_);
+  bool event_received = profile_internal::AwaitProfileEvent(
+      &profile->connections_lock_, absl::Condition(&cond), timeout);
   LOG(INFO) << "WAIT_ACQUIRED "
             << " map_size=" << profile->connections_.size();
 
-  // Clean up pending tracking
+  bool connection_available = profile->connections_.count(mac_addr) != 0;
+
+  // Clean up pending tracking atomically with timeout/cancellation handling.
   profile->pending_outgoing_.erase(mac_addr);
 
-  if (cancellation_flag != nullptr && cancellation_flag->Cancelled()) {
-    LOG(INFO)
-        << __func__ << ": " << profile->getObject().getObjectPath() << ": "
-        << remote_device.GetMacAddress().ToString()
-        << ": Cancelled waiting for a new connection on profile "
-        << service_uuid;
-    return std::nullopt;
+  if (profile->released_ ||
+      (cancellation_flag != nullptr && cancellation_flag->Cancelled())) {
+    LOG(INFO) << __func__ << ": " << profile->getObject().getObjectPath()
+              << ": " << remote_device.GetMacAddress().ToString()
+              << ": Cancelled waiting for a new connection on profile "
+              << service_uuid;
+  } else if (!event_received || !connection_available) {
+    LOG(WARNING) << __func__ << ": " << profile->getObject().getObjectPath()
+                 << ": Timed out "
+                 << "waiting for a new connection on profile " << service_uuid
+                 << " for device " << mac_addr.ToString();
+  } else {
+    profile->abandoned_outgoing_.erase(mac_addr);
+    auto [fd, properties] = profile->connections_[mac_addr].back();
+    profile->connections_[mac_addr].pop_back();
+
+    if (profile->connections_[mac_addr].empty()) {
+      profile->connections_.erase(mac_addr);
+    }
+    return std::move(fd);
   }
 
-  auto [fd, properties] = profile->connections_[mac_addr].back();
-  profile->connections_[mac_addr].pop_back();
-
-  if (profile->connections_[mac_addr].empty())
-
+  if (connection_available) {
     profile->connections_.erase(mac_addr);
-
-  return std::move(fd);
+  } else if (!profile->released_) {
+    profile->abandoned_outgoing_[mac_addr] =
+        absl::Now() + kAbandonedOutgoingLifetime;
+  }
+  return std::nullopt;
 }
 
 // Listen for a connected profile on any device, returning the connected device
-// with its FD. Only fires when another device requests connection from us. i.e. we're the server
+// with its FD. Only fires when another device requests connection from us. i.e.
+// we're the server
 std::optional<std::pair<std::shared_ptr<BluetoothDevice>, sdbus::UnixFd>>
 ProfileManager::GetServiceRecordFD(absl::string_view service_uuid,
-                                   CancellationFlag *cancellation_flag) {
+                                   CancellationFlag* cancellation_flag) {
   std::shared_ptr<Profile> profile;
 
   {
@@ -262,13 +337,12 @@ ProfileManager::GetServiceRecordFD(absl::string_view service_uuid,
   }
 
   LOG(INFO) << __func__ << ": " << profile->getObject().getObjectPath()
-                       << ": Attempting to get a FD for service "
-                       << service_uuid;
+            << ": Attempting to get a FD for service " << service_uuid;
 
   std::unique_ptr<CancellationFlagListener> cancel_listener;
   if (cancellation_flag != nullptr)
     cancel_listener = std::make_unique<CancellationFlagListener>(
-        cancellation_flag, [&profile]() {
+        cancellation_flag, [profile]() {
           profile->connections_lock_.Lock();
           profile->connections_lock_.Unlock();
         });
@@ -280,18 +354,20 @@ ProfileManager::GetServiceRecordFD(absl::string_view service_uuid,
     // Only accept connections that DON'T have pending outgoing attempts
     for (const auto& [mac, fds] : profile->connections_) {
       if (profile->pending_outgoing_.count(mac) == 0) {
-        return true; // Found a connection without pending outgoing
+        return true;  // Found a connection without pending outgoing
       }
     }
 
-    return cancellation_flag != nullptr && cancellation_flag->Cancelled();
+    return profile->released_ ||
+           (cancellation_flag != nullptr && cancellation_flag->Cancelled());
   };
   profile->connections_lock_.Await(absl::Condition(&cond));
 
-  if (cancellation_flag != nullptr && cancellation_flag->Cancelled()) {
-    LOG(INFO)
-        << __func__ << ": Cancelled waiting for new connections on profile "
-        << profile->getObject().getObjectPath();
+  if (profile->released_ ||
+      (cancellation_flag != nullptr && cancellation_flag->Cancelled())) {
+    LOG(INFO) << __func__
+              << ": Cancelled waiting for new connections on profile "
+              << profile->getObject().getObjectPath();
     profile->connections_lock_.Unlock();
     return std::nullopt;
   }
@@ -301,7 +377,8 @@ ProfileManager::GetServiceRecordFD(absl::string_view service_uuid,
   sdbus::UnixFd fd;
   bool found = false;
 
-  for (auto it = profile->connections_.begin(); it != profile->connections_.end(); ++it) {
+  for (auto it = profile->connections_.begin();
+       it != profile->connections_.end(); ++it) {
     if (profile->pending_outgoing_.count(it->first) == 0) {
       mac_addr = it->first;
       auto& fds = it->second;
@@ -325,30 +402,31 @@ ProfileManager::GetServiceRecordFD(absl::string_view service_uuid,
     return std::nullopt;
   }
 
-  auto device = devices_.get_device_by_address(mac_addr);
+  auto device = devices_->get_device_by_address(mac_addr);
   if (device == nullptr) {
     LOG(ERROR) << __func__ << ": Device " << mac_addr.ToString()
-                       << " is no longer available";
+               << " is no longer available";
     return std::nullopt;
   }
 
   return std::pair(device, std::move(fd));
 }
-  void ProfileManager::MarkPendingOutgoing(absl::string_view service_uuid,
-                                                const MacAddress& mac_address) {
+void ProfileManager::MarkPendingOutgoing(absl::string_view service_uuid,
+                                         const MacAddress& mac_address) {
   absl::ReaderMutexLock lock(&registered_service_uuids_mutex_);
   if (registered_services_.count(std::string(service_uuid)) == 0) {
     return;
   }
   auto profile = registered_services_[std::string(service_uuid)];
   absl::MutexLock l(&profile->connections_lock_);
+  profile->abandoned_outgoing_.erase(mac_address);
   profile->pending_outgoing_.insert(mac_address);
   LOG(INFO) << __func__ << ": Marked " << mac_address.ToString()
             << " as pending outgoing for " << service_uuid;
 }
 
-  void ProfileManager::ClearPendingOutgoing(absl::string_view service_uuid,
-                                            const MacAddress& mac_address) {
+void ProfileManager::ClearPendingOutgoing(absl::string_view service_uuid,
+                                          const MacAddress& mac_address) {
   absl::ReaderMutexLock lock(&registered_service_uuids_mutex_);
   if (registered_services_.count(std::string(service_uuid)) == 0) {
     return;

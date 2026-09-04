@@ -14,6 +14,8 @@
 
 #ifndef PLATFORM_IMPL_LINUX_BLUETOOTH_ADAPTER_H_
 #define PLATFORM_IMPL_LINUX_BLUETOOTH_ADAPTER_H_
+#include <cstdint>
+
 #include <sdbus-c++/IConnection.h>
 #include <sdbus-c++/ProxyInterfaces.h>
 
@@ -27,8 +29,8 @@ namespace nearby {
 namespace linux {
 class BluezAdapter : public sdbus::ProxyInterfaces<org::bluez::Adapter1_proxy> {
  public:
-  BluezAdapter(sdbus::IConnection &system_bus,
-               const sdbus::ObjectPath &adapter_object_path)
+  BluezAdapter(sdbus::IConnection& system_bus,
+               const sdbus::ObjectPath& adapter_object_path)
       : ProxyInterfaces(system_bus, sdbus::ServiceName(bluez::SERVICE_DEST),
                         adapter_object_path) {
     registerProxy();
@@ -39,12 +41,19 @@ class BluezAdapter : public sdbus::ProxyInterfaces<org::bluez::Adapter1_proxy> {
 class BluetoothAdapter : public api::BluetoothAdapter {
  public:
   BluetoothAdapter(std::shared_ptr<sdbus::IConnection> system_bus,
-                   const sdbus::ObjectPath &adapter_object_path)
+                   const sdbus::ObjectPath& adapter_object_path)
       : system_bus_(std::move(system_bus)),
         bluez_adapter_(std::make_shared<BluezAdapter>(*system_bus_,
                                                       adapter_object_path)) {}
 
-  ~BluetoothAdapter() override = default;
+  // Medium implementations keep lightweight adapter copies. A copy shares
+  // the BlueZ proxy but starts without ownership of the source wrapper's
+  // discoverability lease.
+  BluetoothAdapter(const BluetoothAdapter& other)
+      : system_bus_(other.system_bus_), bluez_adapter_(other.bluez_adapter_) {}
+  BluetoothAdapter& operator=(const BluetoothAdapter&) = delete;
+
+  ~BluetoothAdapter() override;
 
   bool SetStatus(Status status) override;
   bool IsEnabled() const override;
@@ -58,11 +67,11 @@ class BluetoothAdapter : public api::BluetoothAdapter {
   bool SetName(absl::string_view name, bool persist) override;
   MacAddress GetMacAddress() const override;
 
-  bool RemoveDeviceByObjectPath(const sdbus::ObjectPath &device_object_path) {
+  bool RemoveDeviceByObjectPath(const sdbus::ObjectPath& device_object_path) {
     try {
       bluez_adapter_->RemoveDevice(device_object_path);
       return true;
-    } catch (const sdbus::Error &e) {
+    } catch (const sdbus::Error& e) {
       DBUS_LOG_METHOD_CALL_ERROR(bluez_adapter_, "RemoveDevice", e);
       return false;
     }
@@ -72,12 +81,16 @@ class BluetoothAdapter : public api::BluetoothAdapter {
     return bluez_adapter_->getProxy().getObjectPath();
   }
 
-  BluezAdapter &GetBluezAdapterObject() { return *bluez_adapter_; }
+  BluezAdapter& GetBluezAdapterObject() { return *bluez_adapter_; }
   std::shared_ptr<sdbus::IConnection> GetConnection() { return system_bus_; }
 
  private:
+  bool DisableDiscoverabilityAndRestoreTimeout();
+  void AbandonDiscoverabilityOwnership();
+
   std::shared_ptr<sdbus::IConnection> system_bus_;
   std::shared_ptr<BluezAdapter> bluez_adapter_;
+  bool owns_discoverability_ = false;
 };
 }  // namespace linux
 }  // namespace nearby

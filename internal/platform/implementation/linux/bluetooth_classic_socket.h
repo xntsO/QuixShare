@@ -34,18 +34,17 @@
 namespace nearby {
 namespace linux {
 
-
 class BluetoothSocket final : public api::BluetoothSocket {
  public:
-  BluetoothSocket(std::shared_ptr<BluetoothDevice> device,
-                  sdbus::UnixFd fd)
+  BluetoothSocket(std::shared_ptr<BluetoothDevice> device, sdbus::UnixFd fd)
       : fd_(fd.release()),
         device_(std::move(device)),
         output_stream_(fd_),
         input_stream_(fd_) {}
+  ~BluetoothSocket() override { Close(); }
 
-  InputStream &GetInputStream() override { return input_stream_; }
-  OutputStream &GetOutputStream() override { return output_stream_; }
+  InputStream& GetInputStream() override { return input_stream_; }
+  OutputStream& GetOutputStream() override { return output_stream_; }
   Exception Close() override {
     input_stream_.Close();
     output_stream_.Close();
@@ -56,7 +55,7 @@ class BluetoothSocket final : public api::BluetoothSocket {
 
     return Exception{Exception::kSuccess};
   }
-  api::BluetoothDevice *GetRemoteDevice() override { return device_.get(); };
+  api::BluetoothDevice* GetRemoteDevice() override { return device_.get(); };
 
  private:
   int fd_;

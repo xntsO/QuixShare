@@ -44,7 +44,7 @@ class TemporaryDirectory {
   TemporaryDirectory() {
     std::string path =
         (std::filesystem::temp_directory_path() /
-         ("quickshare-logging-test-" + std::to_string(getpid()) + "-XXXXXX"))
+         ("quixshare-logging-test-" + std::to_string(getpid()) + "-XXXXXX"))
             .string();
     path.push_back('\0');
     char* created = mkdtemp(path.data());
@@ -215,7 +215,7 @@ TEST(NativeFileLogSinkTest, UsesPrivatePermissions) {
 
   EXPECT_EQ(PermissionBits(log_directory), 0700);
   EXPECT_EQ(PermissionBits(sink->log_path()), 0600);
-  EXPECT_EQ(PermissionBits(log_directory / ".quickshare.log.lock"), 0600);
+  EXPECT_EQ(PermissionBits(log_directory / ".quixshare.log.lock"), 0600);
 }
 
 TEST(NativeFileLogSinkTest, RejectsUnavailableDirectory) {
@@ -235,8 +235,8 @@ TEST(LogPathTest, UsesAbsoluteXdgStateHome) {
   ScopedEnvironmentVariable state_home("XDG_STATE_HOME",
                                        temporary_directory.path().string());
 
-  EXPECT_EQ(internal::GetQuickShareLogPath().ToString(),
-            (temporary_directory.path() / "quickshare" / "logs").string());
+  EXPECT_EQ(internal::GetQuixShareLogPath().ToString(),
+            (temporary_directory.path() / "quixshare" / "logs").string());
 }
 
 TEST(LogPathTest, FallsBackToHomeForRelativeXdgStateHome) {
@@ -245,8 +245,8 @@ TEST(LogPathTest, FallsBackToHomeForRelativeXdgStateHome) {
   ScopedEnvironmentVariable state_home("XDG_STATE_HOME", "relative/path");
 
   EXPECT_EQ(
-      internal::GetQuickShareLogPath().ToString(),
-      (temporary_directory.path() / ".local" / "state" / "quickshare" / "logs")
+      internal::GetQuixShareLogPath().ToString(),
+      (temporary_directory.path() / ".local" / "state" / "quixshare" / "logs")
           .string());
 }
 
@@ -256,8 +256,8 @@ TEST(LogPathTest, FallsBackToHomeWhenXdgStateHomeIsMissing) {
   ScopedEnvironmentVariable state_home("XDG_STATE_HOME", std::nullopt);
 
   EXPECT_EQ(
-      internal::GetQuickShareLogPath().ToString(),
-      (temporary_directory.path() / ".local" / "state" / "quickshare" / "logs")
+      internal::GetQuixShareLogPath().ToString(),
+      (temporary_directory.path() / ".local" / "state" / "quixshare" / "logs")
           .string());
 }
 

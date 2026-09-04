@@ -83,6 +83,7 @@ cc_binary(
         "//connections/implementation/flags:connections_flags",
         "//internal/base:file_path",
         "//internal/flags:nearby_flags",
+        "//internal/platform/implementation/linux:network_safety",
         "//proto:sharing_enums_cc_proto",
         "//sharing:attachments",
         "//sharing/flags/generated:generated_flags",

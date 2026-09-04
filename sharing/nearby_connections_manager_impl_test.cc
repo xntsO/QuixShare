@@ -16,6 +16,7 @@
 
 #include <stdint.h>
 
+#include <cstdlib>
 #include <fstream>
 #include <functional>
 #include <ios>
@@ -37,6 +38,7 @@
 #include "internal/base/file_path.h"
 #include "internal/base/files.h"
 #include "internal/flags/nearby_flags.h"
+#include "internal/platform/implementation/linux/network_safety.h"
 #include "internal/test/fake_device_info.h"
 #include "internal/test/fake_task_runner.h"
 #include "sharing/common/nearby_share_enums.h"
@@ -131,6 +133,13 @@ class MockPayloadStatusListener
 class NearbyConnectionsManagerImplTest : public testing::Test {
  public:
   void SetUp() override {
+    const char* opt_in =
+        std::getenv(nearby::linux::kAllowWifiReconfigurationEnv);
+    if (opt_in != nullptr) {
+      original_wifi_reconfiguration_opt_in_ = opt_in;
+    }
+    unsetenv(nearby::linux::kAllowWifiReconfigurationEnv);
+
     NearbyFlags::GetInstance().OverrideBoolFlagValue(
         config_package_nearby::nearby_sharing_feature::kEnableMediumWebRtc,
         false);
@@ -150,6 +159,12 @@ class NearbyConnectionsManagerImplTest : public testing::Test {
   void TearDown() override {
     NearbyFlags::GetInstance().ResetOverridedValues();
     fake_task_runner_.SyncWithTimeout(absl::Seconds(1));
+    if (original_wifi_reconfiguration_opt_in_.has_value()) {
+      setenv(nearby::linux::kAllowWifiReconfigurationEnv,
+             original_wifi_reconfiguration_opt_in_->c_str(), 1);
+    } else {
+      unsetenv(nearby::linux::kAllowWifiReconfigurationEnv);
+    }
   }
 
   void SetConnectionStatus(bool lan_connected, bool internet_connected) {
@@ -186,6 +201,7 @@ class NearbyConnectionsManagerImplTest : public testing::Test {
           EXPECT_TRUE(options.allowed_mediums.ble);
           EXPECT_EQ(options.allowed_mediums.web_rtc, should_use_web_rtc_);
           EXPECT_EQ(options.allowed_mediums.wifi_lan, should_use_wifilan_);
+          EXPECT_FALSE(options.allowed_mediums.wifi_hotspot);
           EXPECT_EQ((*options.fast_advertisement_service_uuid).uuid,
                     kAdvertisingServiceUuid);
 
@@ -223,6 +239,7 @@ class NearbyConnectionsManagerImplTest : public testing::Test {
           EXPECT_EQ(endpoint_info, local_endpoint_info);
           EXPECT_EQ(options.strategy, kStrategy);
           EXPECT_TRUE(options.enforce_topology_constraints);
+          EXPECT_FALSE(options.allowed_mediums.wifi_hotspot);
 
           listener_remote = std::move(listener);
           std::move(callback)(Status::kSuccess);
@@ -437,6 +454,7 @@ class NearbyConnectionsManagerImplTest : public testing::Test {
   bool should_use_web_rtc_ = false;
   bool should_use_wifilan_ = true;
   DataUsage default_data_usage_ = DataUsage::WIFI_ONLY_DATA_USAGE;
+  std::optional<std::string> original_wifi_reconfiguration_opt_in_;
 
   testing::NiceMock<FakeNearbyConnectionsService>* nearby_connections_;
 
@@ -545,7 +563,7 @@ TEST_F(NearbyConnectionsManagerImplTest,
         EXPECT_EQ(service_id, kServiceId);
         EXPECT_EQ(endpoint_info, local_endpoint_info);
         EXPECT_EQ(endpoint_id, kRemoteEndpointId);
-        EXPECT_EQ(options.allowed_mediums.wifi_hotspot, true);
+        EXPECT_FALSE(options.allowed_mediums.wifi_hotspot);
         EXPECT_TRUE(options.non_disruptive_hotspot_mode);
         std::move(callback)(Status::kSuccess);
         notification.Notify();
@@ -655,7 +673,7 @@ TEST_P(NearbyConnectionsManagerImplTestConnectionMediums,
                                    /*ble=*/false,
                                    /*web_rtc=*/should_use_web_rtc_,
                                    /*wifi_lan=*/should_use_wifilan_,
-                                   /*wifi_hotspot*/ true);
+                                   /*wifi_hotspot=*/false);
 
   // StartDiscovery will succeed.
   NearbyConnectionsService::DiscoveryListener discovery_listener_remote;
@@ -1651,7 +1669,7 @@ TEST_P(NearbyConnectionsManagerImplTestMediums, StartAdvertising_Options) {
       /*ble=*/true,
       /*web_rtc=*/should_use_web_rtc_,
       /*wifi_lan=*/should_use_wifilan_,
-      /*wifi_hotspot=*/true);
+      /*wifi_hotspot=*/false);
 
   absl::Notification notification;
   const std::vector<uint8_t> local_endpoint_info(std::begin(kEndpointInfo),

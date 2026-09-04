@@ -5,7 +5,9 @@
 
 #include <QCoreApplication>
 #include <QEventLoop>
+#include <QTemporaryFile>
 #include "gtest/gtest.h"
+#include "internal/platform/implementation/linux/network_safety.h"
 #include "sharing/attachment_container.h"
 #include "sharing/transfer_metadata_builder.h"
 
@@ -39,9 +41,29 @@ class BackendTestPeer {
     return backend.monitoring_requested_;
   }
 
+  static int TargetCount(const Backend& backend) {
+    return backend.targets_.rowCount();
+  }
+
+  static int TransferCount(const Backend& backend) {
+    return backend.transfers_.rowCount();
+  }
+
+  static bool TransferIsFinal(const Backend& backend, int row) {
+    return backend.transfers_
+        .data(backend.transfers_.index(row),
+              ShareTransferModel::IsFinalStatusRole)
+        .toBool();
+  }
+
   static bool HasIncomingOfferTimer(const Backend& backend,
                                     int64_t share_target_id) {
     return backend.incoming_offer_timers_.contains(share_target_id);
+  }
+
+  static void DiscoverTarget(Backend& backend,
+                             const nearby::sharing::ShareTarget& target) {
+    backend.OnShareTargetDiscovered(target);
   }
 
   static void ExpireReceiveWindow(Backend& backend) {
@@ -65,9 +87,11 @@ class TestSharingService final : public nearby::sharing::NearbySharingService {
   void RegisterSendSurface(
       nearby::sharing::TransferUpdateCallback*,
       nearby::sharing::ShareTargetDiscoveredCallback*, SendSurfaceState,
-      nearby::sharing::Advertisement::BlockedVendorId, bool,
+      nearby::sharing::Advertisement::BlockedVendorId,
+      bool disable_wifi_hotspot,
       absl::AnyInvocable<void(StatusCodes)> callback) override {
     send_registered_ = true;
+    disable_wifi_hotspot_ = disable_wifi_hotspot;
     std::move(callback)(StatusCodes::kOk);
   }
   void UnregisterSendSurface(
@@ -101,10 +125,13 @@ class TestSharingService final : public nearby::sharing::NearbySharingService {
   bool IsExtendedAdvertisingSupported() const override { return true; }
   bool IsLanConnected() const override { return true; }
   std::string GetQrCodeUrl() const override { return {}; }
-  void SendAttachments(int64_t,
-                       std::unique_ptr<nearby::sharing::AttachmentContainer>,
-                       std::function<void(StatusCodes)> callback) override {
-    callback(StatusCodes::kOk);
+  void SendAttachments(
+      int64_t share_target_id,
+      std::unique_ptr<nearby::sharing::AttachmentContainer> attachments,
+      std::function<void(StatusCodes)> callback) override {
+    last_sent_target_ = share_target_id;
+    last_sent_attachment_count_ = attachments->GetAttachmentCount();
+    callback(next_send_status_);
   }
   void Accept(int64_t share_target_id,
               std::function<void(StatusCodes)> callback) override {
@@ -127,8 +154,14 @@ class TestSharingService final : public nearby::sharing::NearbySharingService {
     std::move(callback)(StatusCodes::kOk);
   }
   void SetVisibility(
-      nearby::sharing::proto::DeviceVisibility, absl::Duration,
+      nearby::sharing::proto::DeviceVisibility visibility, absl::Duration,
       absl::AnyInvocable<void(StatusCodes) &&> callback) override {
+    last_visibility_ = visibility;
+    ++visibility_request_count_;
+    if (delay_visibility_callback_) {
+      pending_visibility_callback_ = std::move(callback);
+      return;
+    }
     std::move(callback)(StatusCodes::kOk);
   }
   std::string Dump() const override { return {}; }
@@ -167,14 +200,41 @@ class TestSharingService final : public nearby::sharing::NearbySharingService {
   int reject_count() const { return reject_count_; }
   int64_t last_accepted_target() const { return last_accepted_target_; }
   int64_t last_rejected_target() const { return last_rejected_target_; }
+  int64_t last_sent_target() const { return last_sent_target_; }
+  int last_sent_attachment_count() const { return last_sent_attachment_count_; }
+  bool disable_wifi_hotspot() const { return disable_wifi_hotspot_; }
+  void set_next_send_status(StatusCodes status) { next_send_status_ = status; }
+  void set_delay_visibility_callback(bool delay) {
+    delay_visibility_callback_ = delay;
+  }
+  void CompleteVisibility(StatusCodes status = StatusCodes::kOk) {
+    ASSERT_TRUE(pending_visibility_callback_.has_value());
+    auto callback = std::move(*pending_visibility_callback_);
+    pending_visibility_callback_.reset();
+    std::move(callback)(status);
+  }
+  int visibility_request_count() const { return visibility_request_count_; }
+  nearby::sharing::proto::DeviceVisibility last_visibility() const {
+    return last_visibility_;
+  }
 
  private:
   bool send_registered_ = false;
+  bool disable_wifi_hotspot_ = false;
   nearby::sharing::TransferUpdateCallback* receive_callback_ = nullptr;
   int accept_count_ = 0;
   int reject_count_ = 0;
   int64_t last_accepted_target_ = 0;
   int64_t last_rejected_target_ = 0;
+  int64_t last_sent_target_ = 0;
+  int last_sent_attachment_count_ = 0;
+  StatusCodes next_send_status_ = StatusCodes::kOk;
+  bool delay_visibility_callback_ = false;
+  int visibility_request_count_ = 0;
+  nearby::sharing::proto::DeviceVisibility last_visibility_ =
+      nearby::sharing::proto::DEVICE_VISIBILITY_UNSPECIFIED;
+  std::optional<absl::AnyInvocable<void(StatusCodes) &&>>
+      pending_visibility_callback_;
 };
 
 class TestFastInitiationManager final
@@ -237,17 +297,30 @@ class BackendFastInitiationTest : public testing::Test {
  protected:
   void SetUp() override {
     static_cast<void>(TestApplication());
+    const char* opt_in =
+        std::getenv(nearby::linux::kAllowWifiReconfigurationEnv);
+    if (opt_in != nullptr) {
+      original_wifi_reconfiguration_opt_in_ = opt_in;
+    }
+    unsetenv(nearby::linux::kAllowWifiReconfigurationEnv);
     backend_ = BackendTestPeer::Create(service_, fast_init_manager_);
   }
 
   void TearDown() override {
     backend_.reset();
     DrainEvents();
+    if (original_wifi_reconfiguration_opt_in_.has_value()) {
+      setenv(nearby::linux::kAllowWifiReconfigurationEnv,
+             original_wifi_reconfiguration_opt_in_->c_str(), 1);
+    } else {
+      unsetenv(nearby::linux::kAllowWifiReconfigurationEnv);
+    }
   }
 
   TestSharingService service_;
   TestFastInitiationManager fast_init_manager_;
   std::unique_ptr<Backend> backend_;
+  std::optional<std::string> original_wifi_reconfiguration_opt_in_;
 };
 
 TEST_F(BackendFastInitiationTest, StartupScansWithoutReceiving) {
@@ -311,6 +384,7 @@ TEST_F(BackendFastInitiationTest, IncomingOfferCancelsReceiveTimeout) {
   EXPECT_TRUE(BackendTestPeer::IsReceiving(*backend_));
   EXPECT_FALSE(BackendTestPeer::IsReceiveTimerActive(*backend_));
   EXPECT_TRUE(BackendTestPeer::HasIncomingOfferTimer(*backend_, target.id));
+  EXPECT_EQ(BackendTestPeer::TargetCount(*backend_), 0);
 }
 
 TEST_F(BackendFastInitiationTest, AcceptCancelsIncomingOfferTimeout) {
@@ -360,7 +434,7 @@ TEST_F(BackendFastInitiationTest, IncomingOfferTimeoutRejectsExactlyOnce) {
   EXPECT_EQ(service_.last_rejected_target(), target.id);
 }
 
-TEST_F(BackendFastInitiationTest, FinalReceiveRestartsMonitoring) {
+TEST_F(BackendFastInitiationTest, FinalReceiveRestartsPersistentReceive) {
   fast_init_manager_.FireDiscovered();
   DrainEvents();
 
@@ -374,9 +448,10 @@ TEST_F(BackendFastInitiationTest, FinalReceiveRestartsMonitoring) {
           .build());
   DrainEvents();
 
-  EXPECT_TRUE(BackendTestPeer::IsIdle(*backend_));
-  EXPECT_TRUE(BackendTestPeer::IsMonitoringRequested(*backend_));
-  EXPECT_TRUE(fast_init_manager_.IsScanning());
+  EXPECT_TRUE(BackendTestPeer::IsReceiving(*backend_));
+  EXPECT_FALSE(BackendTestPeer::IsMonitoringRequested(*backend_));
+  EXPECT_FALSE(BackendTestPeer::IsReceiveTimerActive(*backend_));
+  EXPECT_FALSE(fast_init_manager_.IsScanning());
 }
 
 TEST_F(BackendFastInitiationTest, DiscoveryStopsFastInitiationScanning) {
@@ -387,11 +462,133 @@ TEST_F(BackendFastInitiationTest, DiscoveryStopsFastInitiationScanning) {
   fast_init_manager_.CompleteStop();
   DrainEvents();
   EXPECT_TRUE(BackendTestPeer::IsDiscovering(*backend_));
+  EXPECT_TRUE(service_.disable_wifi_hotspot());
 
   backend_->startReceive();
   DrainEvents();
+  EXPECT_TRUE(BackendTestPeer::IsReceiving(*backend_));
+  EXPECT_FALSE(BackendTestPeer::IsReceiveTimerActive(*backend_));
+  EXPECT_FALSE(fast_init_manager_.IsScanning());
+}
+
+TEST_F(BackendFastInitiationTest,
+       ReturningHomeDuringScanStopDoesNotRestartDiscovery) {
+  backend_->startDiscovery();
+  EXPECT_FALSE(fast_init_manager_.IsScanning());
   EXPECT_TRUE(BackendTestPeer::IsIdle(*backend_));
-  EXPECT_TRUE(fast_init_manager_.IsScanning());
+
+  backend_->startReceive();
+  DrainEvents();
+  EXPECT_TRUE(BackendTestPeer::IsReceiving(*backend_));
+
+  fast_init_manager_.CompleteStop();
+  DrainEvents();
+  EXPECT_TRUE(BackendTestPeer::IsReceiving(*backend_));
+}
+
+TEST_F(BackendFastInitiationTest, SendsMultipleSelectedFilesTogether) {
+  backend_->startDiscovery();
+  fast_init_manager_.CompleteStop();
+  DrainEvents();
+
+  nearby::sharing::ShareTarget target;
+  target.id = 42;
+  target.device_name = "Phone";
+  BackendTestPeer::DiscoverTarget(*backend_, target);
+  DrainEvents();
+
+  QTemporaryFile first;
+  QTemporaryFile second;
+  ASSERT_TRUE(first.open());
+  ASSERT_TRUE(second.open());
+  first.close();
+  second.close();
+
+  EXPECT_TRUE(backend_->sendFiles(
+      target.id, QStringList{first.fileName(), second.fileName()}));
+  EXPECT_EQ(service_.last_sent_target(), target.id);
+  EXPECT_EQ(service_.last_sent_attachment_count(), 2);
+}
+
+TEST_F(BackendFastInitiationTest, RejectsInvalidMultiFileSelectionAtomically) {
+  backend_->startDiscovery();
+  fast_init_manager_.CompleteStop();
+  DrainEvents();
+
+  nearby::sharing::ShareTarget target;
+  target.id = 43;
+  target.device_name = "Phone";
+  BackendTestPeer::DiscoverTarget(*backend_, target);
+  DrainEvents();
+
+  QTemporaryFile valid_file;
+  ASSERT_TRUE(valid_file.open());
+  valid_file.close();
+
+  EXPECT_FALSE(backend_->sendFiles(
+      target.id,
+      QStringList{valid_file.fileName(), QStringLiteral("/missing/file")}));
+  EXPECT_EQ(service_.last_sent_attachment_count(), 0);
+  EXPECT_EQ(BackendTestPeer::TransferCount(*backend_), 0);
+}
+
+TEST_F(BackendFastInitiationTest, FailedSendCanBeClearedAndRetried) {
+  backend_->startDiscovery();
+  fast_init_manager_.CompleteStop();
+  DrainEvents();
+
+  nearby::sharing::ShareTarget target;
+  target.id = 44;
+  target.device_name = "Phone";
+  BackendTestPeer::DiscoverTarget(*backend_, target);
+  DrainEvents();
+
+  QTemporaryFile file;
+  ASSERT_TRUE(file.open());
+  file.close();
+  service_.set_next_send_status(
+      nearby::sharing::NearbySharingService::StatusCodes::kError);
+
+  EXPECT_TRUE(backend_->sendFile(target.id, file.fileName()));
+  DrainEvents();
+  ASSERT_EQ(BackendTestPeer::TransferCount(*backend_), 1);
+  EXPECT_TRUE(BackendTestPeer::TransferIsFinal(*backend_, 0));
+
+  backend_->clearTransfer(target.id);
+  EXPECT_EQ(BackendTestPeer::TransferCount(*backend_), 0);
+}
+
+TEST_F(BackendFastInitiationTest, SerializesRapidVisibilityChanges) {
+  service_.set_delay_visibility_callback(true);
+
+  backend_->setVisibleToEveryone(false);
+  backend_->setVisibleToEveryone(true);
+  EXPECT_EQ(service_.visibility_request_count(), 1);
+  EXPECT_EQ(service_.last_visibility(),
+            nearby::sharing::proto::DEVICE_VISIBILITY_HIDDEN);
+
+  service_.CompleteVisibility();
+  DrainEvents();
+  EXPECT_EQ(service_.visibility_request_count(), 2);
+  EXPECT_EQ(service_.last_visibility(),
+            nearby::sharing::proto::DEVICE_VISIBILITY_EVERYONE);
+
+  service_.CompleteVisibility();
+  DrainEvents();
+  EXPECT_TRUE(backend_->visibleToEveryone());
+  EXPECT_TRUE(BackendTestPeer::IsReceiving(*backend_));
+}
+
+TEST_F(BackendFastInitiationTest, FailedHideRestoresReceiving) {
+  service_.set_delay_visibility_callback(true);
+
+  backend_->setVisibleToEveryone(false);
+  service_.CompleteVisibility(
+      nearby::sharing::NearbySharingService::StatusCodes::kError);
+  DrainEvents();
+
+  EXPECT_TRUE(backend_->visibleToEveryone());
+  EXPECT_TRUE(BackendTestPeer::IsReceiving(*backend_));
 }
 
 TEST_F(BackendFastInitiationTest, ScanErrorUsesOneFallbackWindowThenIdles) {

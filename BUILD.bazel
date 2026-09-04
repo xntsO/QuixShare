@@ -18,6 +18,12 @@ package(default_visibility = ["//visibility:public"])
 
 licenses(["notice"])
 
+exports_files([
+    "LICENSE",
+    "NOTICE",
+    "THIRD_PARTY_NOTICES.md",
+])
+
 bool_flag(
     name = "enable_webrtc",
     build_setting_default = False,

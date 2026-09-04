@@ -384,36 +384,46 @@ void NearbySharingServiceImpl::Shutdown(
         *is_shutting_down_ = true;
         service_observers_.Clear();
 
-        StopAdvertising();
         StopFastInitiationAdvertising();
         StopScanning();
-        nearby_connections_manager_->Shutdown();
-
-        Cleanup();
-
-        certificate_manager_->RemoveObserver(this);
-        account_manager_.RemoveObserver(this);
-        context_->GetConnectivityManager()->UnregisterLanListener(
-            kConnectionListenerName);
-        context_->GetBluetoothAdapter().RemoveObserver(this);
-        nearby_fast_initiation_->RemoveObserver(this);
-
-        on_network_changed_delay_timer_.reset();
-
-        foreground_receive_callbacks_map_.clear();
-        background_receive_callbacks_map_.clear();
-
-        device_info_.UnregisterScreenLockedListener(kScreenStateListenerName);
-        device_info_.UnregisterSuspendResumeListener(
-            suspend_resume_listener_id_);
-
-        settings_->RemoveSettingsObserver(this);
-
-        certificate_manager_->StopScheduledTasks();
-
-        is_shutting_down_ = nullptr;
-        std::move(status_codes_callback)(StatusCodes::kOk);
+        StopAdvertising([this, status_codes_callback =
+                                   std::move(status_codes_callback)]() mutable {
+          FinishShutdown(std::move(status_codes_callback));
+        });
       });
+}
+
+void NearbySharingServiceImpl::FinishShutdown(
+    std::function<void(StatusCodes)> status_codes_callback) {
+  // Nearby Connections StopAdvertising is asynchronous. Do not tear down its
+  // manager or report shutdown completion until its callback confirms that
+  // transport advertising/listening cleanup (including Bluetooth identity
+  // restoration) has drained.
+  nearby_connections_manager_->Shutdown();
+
+  Cleanup();
+
+  certificate_manager_->RemoveObserver(this);
+  account_manager_.RemoveObserver(this);
+  context_->GetConnectivityManager()->UnregisterLanListener(
+      kConnectionListenerName);
+  context_->GetBluetoothAdapter().RemoveObserver(this);
+  nearby_fast_initiation_->RemoveObserver(this);
+
+  on_network_changed_delay_timer_.reset();
+
+  foreground_receive_callbacks_map_.clear();
+  background_receive_callbacks_map_.clear();
+
+  device_info_.UnregisterScreenLockedListener(kScreenStateListenerName);
+  device_info_.UnregisterSuspendResumeListener(suspend_resume_listener_id_);
+
+  settings_->RemoveSettingsObserver(this);
+
+  certificate_manager_->StopScheduledTasks();
+
+  is_shutting_down_ = nullptr;
+  std::move(status_codes_callback)(StatusCodes::kOk);
 }
 
 bool NearbySharingServiceImpl::IsShuttingDown() {
@@ -2189,17 +2199,31 @@ void NearbySharingServiceImpl::InvalidateAdvertisingState() {
   ScheduleRotateBackgroundAdvertisementTimer();
 }
 
-void NearbySharingServiceImpl::StopAdvertising() {
+void NearbySharingServiceImpl::StopAdvertising(
+    std::function<void()> completion_callback) {
   if (advertising_power_level_ == PowerLevel::kUnknown) {
     VLOG(1) << __func__ << ": Not currently advertising, ignoring.";
+    if (completion_callback) {
+      std::move(completion_callback)();
+    }
     return;
   }
 
-  nearby_connections_manager_->StopAdvertising([this](Status status) {
-    // Log analytics event of advertising end.
-    analytics_recorder_.NewAdvertiseDevicePresenceEnd(advertising_session_id_);
-    OnStopAdvertisingResult(status);
-  });
+  nearby_connections_manager_->StopAdvertising(
+      [this, completion_callback =
+                 std::move(completion_callback)](Status status) mutable {
+        // Log analytics event of advertising end.
+        analytics_recorder_.NewAdvertiseDevicePresenceEnd(
+            advertising_session_id_);
+        OnStopAdvertisingResult(status);
+        if (completion_callback) {
+          // The manager callback may be synchronous in tests and is not
+          // guaranteed to run on the service thread on every platform. Post
+          // directly because the normal helper intentionally rejects work
+          // after is_shutting_down_ is set.
+          service_thread_->PostTask(std::move(completion_callback));
+        }
+      });
 
   VLOG(1) << __func__ << ": Stop advertising requested";
 
@@ -2653,6 +2677,14 @@ void NearbySharingServiceImpl::OnIncomingSessionFrameRead(
       OnReceivedIntroduction(*session, frame->introduction());
       // OnReceivedIntroduction will schedule the next ReadFrame.
       return;
+    case service::proto::V1Frame::CERTIFICATE_INFO:
+    case service::proto::V1Frame::PROGRESS_UPDATE:
+      // Legacy peers can still send these deprecated frames. They no longer
+      // require any action, but they are valid wire-format messages and must
+      // not be reported as unknown protocol errors.
+      VLOG(1) << __func__ << ": Ignoring deprecated frame of type: "
+              << static_cast<int>(frame->type());
+      break;
     default:
       LOG(ERROR) << __func__ << ": Discarding unknown frame of type: "
                  << static_cast<int>(frame->type());
@@ -2999,6 +3031,14 @@ void NearbySharingServiceImpl::OnOutgoingSessionFrameRead(
             share_target_id, [](StatusCodes status_codes) {},
             /*is_initiator_of_cancellation=*/false);
       });
+      break;
+    case nearby::sharing::service::proto::V1Frame::CERTIFICATE_INFO:
+    case nearby::sharing::service::proto::V1Frame::PROGRESS_UPDATE:
+      // Legacy peers can still send these deprecated frames. They no longer
+      // require any action, but they are valid wire-format messages and must
+      // not be reported as unknown protocol errors.
+      VLOG(1) << __func__ << ": Ignoring deprecated frame of type: "
+              << static_cast<int>(frame->type());
       break;
     default:
       LOG(ERROR) << __func__ << ": Discarding unknown frame of type: "

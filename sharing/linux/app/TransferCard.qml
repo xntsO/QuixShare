@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import "."
 
 Item {
     id: root
@@ -21,6 +22,7 @@ Item {
     property int transferredAttachmentsCount: 0
     property var totalBytes: 0
     property string finalActionText: ""
+    readonly property bool narrow: width < 430
 
     signal cancelRequested()
     signal finalActionRequested()
@@ -29,9 +31,7 @@ Item {
         if (!path || path.length === 0) {
             return direction === "send" ? "Selected file" : transferSummary()
         }
-        const normalized = decodeURIComponent(path).replace("file://", "")
-        const parts = normalized.split("/")
-        return parts.length === 0 ? normalized : parts[parts.length - 1]
+        return AppSettings.baseName(path)
     }
 
     function transferSummary() {
@@ -96,26 +96,26 @@ Item {
     Rectangle {
         anchors.fill: parent
         radius: 24
-        color: "#FFFFFF"
-        border.color: "#BCE5F5"
+        color: AppSettings.surfaceContainer
+        border.color: AppSettings.outline
         border.width: 1
     }
 
     RowLayout {
         anchors.fill: parent
-        anchors.margins: root.compact ? 16 : 28
-        spacing: root.compact ? 16 : 24
+        anchors.margins: root.compact ? (root.narrow ? 12 : 16) : 28
+        spacing: root.compact ? (root.narrow ? 10 : 16) : 24
 
         Rectangle {
-            Layout.preferredWidth: root.compact ? 72 : 96
-            Layout.preferredHeight: root.compact ? 72 : 96
+            Layout.preferredWidth: root.compact ? (root.narrow ? 54 : 72) : 96
+            Layout.preferredHeight: width
             radius: root.compact ? 18 : 24
-            color: "#E8F7FC"
+            color: AppSettings.surfaceHigh
 
             Image {
                 anchors.centerIn: parent
-                width: root.compact ? 44 : 60
-                height: root.compact ? 44 : 60
+                width: root.compact ? (root.narrow ? 34 : 44) : 60
+                height: width
                 source: "qrc:/icons/file.svg"
                 fillMode: Image.PreserveAspectFit
                 sourceSize.width: width
@@ -134,14 +134,14 @@ Item {
                 text: root.targetname
                 font.pointSize: root.compact ? 14 : 17
                 font.weight: 700
-                color: "#1A1C1E"
+                color: AppSettings.text
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }
 
             Text {
                 text: root.baseName(root.filename)
-                color: "#57707A"
+                color: AppSettings.mutedText
                 font.pointSize: root.compact ? 10 : 12
                 elide: Text.ElideMiddle
                 Layout.fillWidth: true
@@ -157,7 +157,7 @@ Item {
                 background: Rectangle {
                     implicitHeight: root.compact ? 8 : 10
                     radius: root.compact ? 4 : 5
-                    color: "#DDEEF5"
+                    color: AppSettings.surfaceHigh
                 }
 
                 contentItem: Item {
@@ -165,7 +165,7 @@ Item {
                         width: transferProgress.visualPosition * parent.width
                         height: root.compact ? 8 : 10
                         radius: root.compact ? 4 : 5
-                        color: "#0D6D90"
+                        color: AppSettings.primary
                     }
                 }
             }
@@ -175,7 +175,7 @@ Item {
 
                 Text {
                     text: root.statusText()
-                    color: "#57707A"
+                    color: AppSettings.mutedText
                     font.pointSize: root.compact ? 10 : 12
                     Layout.fillWidth: true
                     elide: Text.ElideRight
@@ -183,7 +183,7 @@ Item {
 
                 Text {
                     text: Math.round(Math.max(0, Math.min(1, root.progressValue)) * 100) + "%"
-                    color: "#0D6D90"
+                    color: AppSettings.primary
                     font.pointSize: root.compact ? 11 : 13
                     font.weight: 700
                 }
@@ -214,7 +214,8 @@ Item {
                         text: actionButton.text
                         font.pointSize: root.compact ? 12 : 14
                         font.weight: 600
-                        color: "white"
+                        color: root.isFinalStatus ? AppSettings.onPrimaryContainer
+                                                  : "white"
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -224,7 +225,7 @@ Item {
                         implicitHeight: root.compact ? 36 : 46
                         radius: root.compact ? 10 : 12
                         color: root.isFinalStatus
-                               ? (actionButton.hovered ? "#195871" : "#06384C")
+                               ? AppSettings.primaryContainer
                                : (actionButton.hovered ? "#B62828" : "#D94C4C")
                     }
                 }

@@ -182,7 +182,7 @@ class LinuxDeviceInfo final : public nearby::api::DeviceInfo {
     return BuildPathFromBase("/tmp", {"Google Nearby"});
   }
   FilePath GetLogPath() const override {
-    return GetQuickShareLogPath();
+    return GetQuixShareLogPath();
   }
   bool IsScreenLocked() const override { return false; }
   void RegisterScreenLockedListener(

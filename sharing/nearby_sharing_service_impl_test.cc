@@ -1444,6 +1444,34 @@ TEST_F(NearbySharingServiceImplTest, StopFastInitiationAdvertising) {
 }
 
 TEST_F(NearbySharingServiceImplTest,
+       ShutdownWaitsForConnectionsAdvertisingToStop) {
+  MockTransferUpdateCallback transfer_callback;
+  ASSERT_EQ(RegisterReceiveSurface(
+                &transfer_callback,
+                NearbySharingService::ReceiveSurfaceState::kForeground),
+            NearbySharingService::StatusCodes::kOk);
+  ASSERT_TRUE(fake_nearby_connections_manager_->IsAdvertising());
+
+  auto stop_advertising_callback =
+      fake_nearby_connections_manager_->GetStopAdvertisingCallback();
+  absl::Notification shutdown_complete;
+  service_->Shutdown([&](NearbySharingService::StatusCodes status) {
+    EXPECT_EQ(status, NearbySharingService::StatusCodes::kOk);
+    shutdown_complete.Notify();
+  });
+
+  FlushTesting();
+  EXPECT_FALSE(shutdown_complete.HasBeenNotified());
+  EXPECT_FALSE(fake_nearby_connections_manager_->is_shutdown());
+
+  std::move(stop_advertising_callback)(ConnectionsStatus::kSuccess);
+  EXPECT_TRUE(
+      shutdown_complete.WaitForNotificationWithTimeout(kTaskWaitTimeout));
+  EXPECT_TRUE(fake_nearby_connections_manager_->is_shutdown());
+  is_shutdown_ = true;
+}
+
+TEST_F(NearbySharingServiceImplTest,
        StopFastInitiationAdvertising_BluetoothBecomesNotPresent) {
   FakeNearbyFastInitiation* fast_initiation =
       nearby_fast_initiation_factory_->GetNearbyFastInitiation();
@@ -3859,6 +3887,45 @@ TEST_F(NearbySharingServiceImplTest, CancelReceiverNoninitiator) {
   EXPECT_FALSE(
       fake_nearby_connections_manager_->connection_endpoint_info(kEndpointId)
           .has_value());
+}
+
+TEST_F(NearbySharingServiceImplTest,
+       IncomingDeprecatedControlFramesKeepReaderActive) {
+  NiceMock<MockTransferUpdateCallback> transfer_callback;
+  int64_t target_id = SetUpIncomingConnection(transfer_callback);
+  ScopedReceiveSurface r(service_.get(), &transfer_callback);
+  AcceptConnection(transfer_callback, target_id, kEndpointId);
+  ASSERT_TRUE(ExpectPairedKeyEncryptionFrame());
+  ASSERT_TRUE(ExpectPairedKeyResultFrame());
+
+  for (V1Frame::FrameType frame_type :
+       {V1Frame::CERTIFICATE_INFO, V1Frame::PROGRESS_UPDATE}) {
+    Frame frame;
+    frame.set_version(Frame::V1);
+    frame.mutable_v1()->set_type(frame_type);
+    std::vector<uint8_t> bytes(frame.ByteSizeLong());
+    ASSERT_TRUE(frame.SerializeToArray(bytes.data(), bytes.size()));
+    ReceiveMessageFromConnection(std::move(bytes));
+    FlushTesting();
+    EXPECT_TRUE(
+        fake_nearby_connections_manager_->connection_endpoint_info(kEndpointId)
+            .has_value());
+  }
+
+  // A following frame must still be consumed; legacy control frames must not
+  // terminate the continuous frame-read loop.
+  absl::Notification notification;
+  EXPECT_CALL(transfer_callback,
+              OnTransferUpdate(testing::_, testing::_, testing::_))
+      .WillOnce([&](const ShareTarget& share_target,
+                    const AttachmentContainer& container,
+                    TransferMetadata metadata) {
+        EXPECT_EQ(target_id, share_target.id);
+        EXPECT_EQ(TransferMetadata::Status::kCancelled, metadata.status());
+        notification.Notify();
+      });
+  SendCancel();
+  EXPECT_TRUE(notification.WaitForNotificationWithTimeout(kWaitTimeout));
 }
 
 TEST_F(NearbySharingServiceImplTest,

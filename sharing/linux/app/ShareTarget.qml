@@ -1,94 +1,71 @@
 import QtQuick
 import QtQuick.Layouts
-import QtQuick.Controls
 import "."
 
 Rectangle {
-    id: rootItem
-    // Explicit sizes so parent containers know how to space them
-    width: 100
-    height: 110 // Reduced slightly since the progress outer bounds are gone
-    color: "transparent"
+    id: root
+    width: 142
+    height: 126
+    radius: 20
+    color: mouseArea.containsMouse && interactionEnabled
+           ? AppSettings.surfaceHigh : AppSettings.surfaceContainer
+    border.color: mouseArea.containsMouse && interactionEnabled
+                  ? AppSettings.primary : AppSettings.outline
+    border.width: 1
 
-    // --- CUSTOM ARGUMENTS (PROPERTIES) ---
-    property string deviceName: "Unknown Device"
-    property string iconSource: "qrc:icons/smartphone.svg"
+    property string deviceName: "Unknown device"
+    property int deviceType: 0
     property var shareTargetId: 0
     property bool interactionEnabled: true
-    property bool hovered: interactionEnabled && targetMouseArea.containsMouse
+
+    function iconSource() {
+        if (deviceType === 3)
+            return "qrc:/icons/laptop.svg"
+        if (deviceType === 2)
+            return "qrc:/icons/tablet.svg"
+        return "qrc:/icons/smartphone.svg"
+    }
+
+    Behavior on color { ColorAnimation { duration: 100 } }
+    Behavior on opacity { NumberAnimation { duration: 160 } }
 
     ColumnLayout {
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        spacing: 5
+        anchors.fill: parent
+        anchors.margins: 12
+        spacing: 8
 
-
-        // --- ICON CONTAINER ---
-        Item {
-            id: iconContainer
-            implicitWidth: 60
-            implicitHeight: 60
+        Rectangle {
             Layout.alignment: Qt.AlignHCenter
-
-
-            // Icon Circle Background
-            Rectangle {
-                id: iconCircle
-                anchors.fill: parent
-                color: rootItem.hovered ? "#195871" : "#6EA7B6"
-                radius: width / 2
-
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 80
-                        easing.type: Easing.OutQuad
-                    }
-                }
-
-                Button {
-                    id: iconButton
-                    enabled: rootItem.interactionEnabled
-                    icon.source: rootItem.iconSource
-                    anchors.fill: parent
-                    anchors.margins: 5
-                    icon.color: "white"
-                    icon.height: iconCircle.height 
-                    icon.width: iconCircle.width
-                    
-                    background: Rectangle {
-                        color: "transparent"
-                    }
-                }
-            }
-
-            MouseArea {
-                id: targetMouseArea
-                anchors.fill: parent
-                enabled: rootItem.interactionEnabled
-                hoverEnabled: true
-                cursorShape: rootItem.interactionEnabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: {
-                    EventBus.shareTargetSelected(rootItem.shareTargetId);
-                }
+            Layout.preferredWidth: 62
+            Layout.preferredHeight: 62
+            radius: 31
+            color: AppSettings.primaryContainer
+            Image {
+                anchors.centerIn: parent
+                width: 38
+                height: 38
+                source: root.iconSource()
+                fillMode: Image.PreserveAspectFit
             }
         }
 
-        // --- TEXT COMPONENT ---
         Text {
-            text: rootItem.deviceName
             Layout.fillWidth: true
+            text: root.deviceName
+            color: AppSettings.text
+            font.pixelSize: 12
+            font.weight: 600
             horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
-            color: rootItem.hovered ? "#06384C" : "#1A1C1E"
-
-            Behavior on color {
-                ColorAnimation {
-                    duration: 120
-                    easing.type: Easing.OutQuad
-                }
-            }
+            elide: Text.ElideRight
         }
     }
 
+    MouseArea {
+        id: mouseArea
+        anchors.fill: parent
+        enabled: root.interactionEnabled
+        hoverEnabled: true
+        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+        onClicked: EventBus.shareTargetSelected(root.shareTargetId)
+    }
 }
