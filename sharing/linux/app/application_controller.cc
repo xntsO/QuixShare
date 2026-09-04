@@ -227,6 +227,46 @@ bool ApplicationController::filePickerBusy() const {
   return file_picker_ != nullptr;
 }
 
+bool ApplicationController::openExternalUrl(const QUrl& url) {
+  const QString scheme = url.scheme().toLower();
+  if (!url.isValid() || url.isRelative() ||
+      (scheme != QStringLiteral("https") &&
+       scheme != QStringLiteral("http"))) {
+    qWarning() << "Refusing to open invalid or unsupported external URL:" << url;
+    return false;
+  }
+
+  struct UrlHelper {
+    const char* program;
+    QStringList arguments;
+  };
+  const QString encoded_url = url.toString(QUrl::FullyEncoded);
+  const QList<UrlHelper> helpers = {
+      {"xdg-open", {encoded_url}},
+      {"kioclient6", {QStringLiteral("exec"), encoded_url}},
+      {"kioclient5", {QStringLiteral("exec"), encoded_url}},
+      {"gio", {QStringLiteral("open"), encoded_url}},
+  };
+
+  for (const UrlHelper& helper : helpers) {
+    const QString program =
+        QStandardPaths::findExecutable(QString::fromLatin1(helper.program));
+    if (program.isEmpty()) {
+      continue;
+    }
+    QProcess process;
+    process.setProcessEnvironment(HostDesktopEnvironment());
+    process.setProgram(program);
+    process.setArguments(helper.arguments);
+    if (process.startDetached()) {
+      return true;
+    }
+  }
+
+  qWarning() << "No host desktop URL opener could be started for:" << url;
+  return false;
+}
+
 bool ApplicationController::chooseDownloadFolder(const QString& initial_path) {
   if (folder_picker_ != nullptr) {
     return true;

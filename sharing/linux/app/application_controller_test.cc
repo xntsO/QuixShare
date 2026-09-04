@@ -217,4 +217,14 @@ TEST(ApplicationControllerTest, NativeFolderPickerUsesValidInitialDirectory) {
             QFileInfo(directory.path()).absoluteFilePath());
 }
 
+TEST(ApplicationControllerTest, ExternalUrlRejectsUnsupportedSchemes) {
+  ApplicationController controller(TestApplication());
+
+  EXPECT_FALSE(controller.openExternalUrl(QUrl()));
+  EXPECT_FALSE(controller.openExternalUrl(
+      QUrl(QStringLiteral("file:///tmp/not-a-web-link"))));
+  EXPECT_FALSE(controller.openExternalUrl(
+      QUrl(QStringLiteral("javascript:alert(1)"))));
+}
+
 }  // namespace

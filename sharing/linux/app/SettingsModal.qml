@@ -392,7 +392,13 @@ Item {
                                         required property var modelData
                                         Layout.fillWidth: true
                                         text: modelData.label
-                                        onClicked: Qt.openUrlExternally(modelData.url)
+                                        onClicked: {
+                                            if (appController.openExternalUrl(modelData.url)) {
+                                                linkError.text = ""
+                                            } else {
+                                                linkError.text = "Could not open the web browser. Check that your desktop has xdg-open, KIO, or GIO installed."
+                                            }
+                                        }
                                         contentItem: Text {
                                             text: projectButton.text
                                             color: AppSettings.primary
@@ -409,6 +415,15 @@ Item {
                                         }
                                     }
                                 }
+                            }
+
+                            Text {
+                                id: linkError
+                                Layout.fillWidth: true
+                                visible: text.length > 0
+                                color: AppSettings.danger
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
                             }
 
                             Text {

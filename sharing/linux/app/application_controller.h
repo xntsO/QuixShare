@@ -9,6 +9,7 @@
 #include <QPointer>
 #include <QSet>
 #include <QStringList>
+#include <QUrl>
 
 class Backend;
 class QApplication;
@@ -45,6 +46,7 @@ class ApplicationController : public QObject {
   Q_SCRIPTABLE void ShowWindow();
   Q_INVOKABLE bool chooseDownloadFolder(const QString& initial_path);
   Q_INVOKABLE bool chooseFiles(const QString& initial_path);
+  Q_INVOKABLE bool openExternalUrl(const QUrl& url);
   void Quit();
 
  signals:

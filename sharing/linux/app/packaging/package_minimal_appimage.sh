@@ -240,6 +240,7 @@ install -m 0644 \
   "$WORKSPACE_ROOT/sharing/linux/app/icons/quixshare-taskbar.png" \
   "$APPDIR/usr/share/icons/hicolor/512x512/apps/quixshare.png"
 install -m 0644 \
+  "$WORKSPACE_ROOT/BRANDING.md" \
   "$WORKSPACE_ROOT/LICENSE" \
   "$WORKSPACE_ROOT/NOTICE" \
   "$WORKSPACE_ROOT/THIRD_PARTY_NOTICES.md" \
