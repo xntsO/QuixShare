@@ -366,7 +366,7 @@ Item {
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "Built from the open-source Google Nearby codebase and community Linux work. The interface was inspired by RQuickShare, but no RQuickShare code is included. Core source is Apache-2.0; included components keep their own licenses. The QuixShare name and artwork are owned by xntsO and covered by a separate branding policy."
+                                text: "Built from Google Nearby through the kidfromjupiter/nearby Linux community fork. The interface was inspired by RQuickShare, but no RQuickShare code is included. Core source is Apache-2.0; included components keep their own licenses. The QuixShare name and artwork are owned by xntsO and covered by a separate branding policy."
                                 color: AppSettings.mutedText
                                 font.pixelSize: 12
                                 wrapMode: Text.WordWrap
@@ -381,7 +381,8 @@ Item {
                                 Repeater {
                                     model: [
                                         { label: "Source & licenses", url: AppSettings.projectUrl },
-                                        { label: "Upstream credit", url: AppSettings.upstreamUrl },
+                                        { label: "Google upstream", url: AppSettings.upstreamUrl },
+                                        { label: "Linux fork credit", url: AppSettings.linuxForkUrl },
                                         { label: "UI inspiration", url: AppSettings.interfaceInspirationUrl },
                                         { label: "Report an issue", url: AppSettings.issuesUrl },
                                         { label: "Contribute / support", url: AppSettings.projectHelpUrl }

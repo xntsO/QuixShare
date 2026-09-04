@@ -13,6 +13,7 @@ QtObject {
     readonly property string issuesUrl: projectUrl + "/issues"
     readonly property string projectHelpUrl: projectUrl + "#contributing-and-security"
     readonly property string upstreamUrl: "https://github.com/google/nearby"
+    readonly property string linuxForkUrl: "https://github.com/kidfromjupiter/nearby"
     readonly property string interfaceInspirationUrl: "https://github.com/Martichou/rquickshare"
 
     property Settings storage: Settings {
